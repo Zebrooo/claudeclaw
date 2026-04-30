@@ -7,6 +7,8 @@ import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import {
   NewMessage,
+  PipelineEvent,
+  PipelineTask,
   RegisteredGroup,
   ScheduledTask,
   TaskRunLog,
@@ -86,6 +88,33 @@ function createSchema(
       requires_trigger INTEGER DEFAULT 1
     );
 
+    CREATE TABLE IF NOT EXISTS pipeline_events (
+      id TEXT PRIMARY KEY,
+      type TEXT NOT NULL,
+      source_agent TEXT NOT NULL,
+      task_id TEXT NOT NULL,
+      project TEXT,
+      payload TEXT NOT NULL DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'pending',
+      requires_approval INTEGER NOT NULL DEFAULT 0,
+      iteration INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_pipeline_events_status ON pipeline_events(status);
+    CREATE INDEX IF NOT EXISTS idx_pipeline_events_task_id ON pipeline_events(task_id);
+
+    CREATE TABLE IF NOT EXISTS pipeline_tasks (
+      id TEXT PRIMARY KEY,
+      description TEXT NOT NULL,
+      project TEXT,
+      status TEXT NOT NULL DEFAULT 'active',
+      current_agent TEXT,
+      iteration INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
   `);
 
   // Run plugin DB schema (plugins register on import before DB init)
@@ -131,12 +160,16 @@ function createSchema(
   // Add agent_config column if it doesn't exist (migration for existing DBs)
   try {
     database.exec(`ALTER TABLE registered_groups ADD COLUMN agent_config TEXT`);
-  } catch { /* column already exists */ }
+  } catch {
+    /* column already exists */
+  }
 
   // Add runtime column if it doesn't exist (migration for existing DBs)
   try {
     database.exec(`ALTER TABLE registered_groups ADD COLUMN runtime TEXT`);
-  } catch { /* column already exists */ }
+  } catch {
+    /* column already exists */
+  }
 
   // Add channel and is_group columns if they don't exist (migration for existing DBs)
   try {
@@ -598,7 +631,7 @@ export function getRegisteredGroup(
       row.requires_trigger === null ? undefined : row.requires_trigger === 1,
     isMain: row.is_main === 1 ? true : undefined,
     agentConfig: row.agent_config ? JSON.parse(row.agent_config) : undefined,
-    runtime: row.runtime as RegisteredGroup['runtime'] || undefined,
+    runtime: (row.runtime as RegisteredGroup['runtime']) || undefined,
   };
 }
 
@@ -657,7 +690,7 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
         row.requires_trigger === null ? undefined : row.requires_trigger === 1,
       isMain: row.is_main === 1 ? true : undefined,
       agentConfig: row.agent_config ? JSON.parse(row.agent_config) : undefined,
-      runtime: row.runtime as RegisteredGroup['runtime'] || undefined,
+      runtime: (row.runtime as RegisteredGroup['runtime']) || undefined,
     };
   }
   return result;
@@ -730,4 +763,106 @@ function migrateJsonState(): void {
       }
     }
   }
+}
+
+// ── Pipeline Events ──────────────────────────────────────────────────────────
+
+export function insertPipelineEvent(event: PipelineEvent): void {
+  getDb()
+    .prepare(
+      `
+    INSERT INTO pipeline_events
+    (id, type, source_agent, task_id, project, payload, status, requires_approval, iteration, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `,
+    )
+    .run(
+      event.id,
+      event.type,
+      event.source_agent,
+      event.task_id,
+      event.project,
+      event.payload,
+      event.status,
+      event.requires_approval,
+      event.iteration,
+      event.created_at,
+      event.updated_at,
+    );
+}
+
+export function getPipelineEventsByStatus(status: string): PipelineEvent[] {
+  return getDb()
+    .prepare(
+      `SELECT * FROM pipeline_events WHERE status = ? ORDER BY created_at ASC`,
+    )
+    .all(status) as PipelineEvent[];
+}
+
+export function getPipelineEventsByTaskAndType(
+  taskId: string,
+  type: string,
+): PipelineEvent[] {
+  return getDb()
+    .prepare(`SELECT * FROM pipeline_events WHERE task_id = ? AND type = ?`)
+    .all(taskId, type) as PipelineEvent[];
+}
+
+export function updatePipelineEventStatus(id: string, status: string): void {
+  getDb()
+    .prepare(
+      `UPDATE pipeline_events SET status = ?, updated_at = ? WHERE id = ?`,
+    )
+    .run(status, new Date().toISOString(), id);
+}
+
+export function insertPipelineTask(task: PipelineTask): void {
+  getDb()
+    .prepare(
+      `
+    INSERT INTO pipeline_tasks (id, description, project, status, current_agent, iteration, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `,
+    )
+    .run(
+      task.id,
+      task.description,
+      task.project,
+      task.status,
+      task.current_agent,
+      task.iteration,
+      task.created_at,
+      task.updated_at,
+    );
+}
+
+export function updatePipelineTask(
+  id: string,
+  updates: { status?: string; current_agent?: string; iteration?: number },
+): void {
+  const fields: string[] = [];
+  const values: unknown[] = [];
+
+  if (updates.status !== undefined) {
+    fields.push('status = ?');
+    values.push(updates.status);
+  }
+  if (updates.current_agent !== undefined) {
+    fields.push('current_agent = ?');
+    values.push(updates.current_agent);
+  }
+  if (updates.iteration !== undefined) {
+    fields.push('iteration = ?');
+    values.push(updates.iteration);
+  }
+
+  if (fields.length === 0) return;
+
+  fields.push('updated_at = ?');
+  values.push(new Date().toISOString());
+  values.push(id);
+
+  getDb()
+    .prepare(`UPDATE pipeline_tasks SET ${fields.join(', ')} WHERE id = ?`)
+    .run(...values);
 }

@@ -6,6 +6,7 @@ import { CronExpressionParser } from 'cron-parser';
 import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
 import { AvailableGroup } from '../runtimes/container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
+import { eventBus } from './event-bus.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import { MessageRouter, RegisteredGroup } from './types.js';
@@ -207,6 +208,10 @@ export async function processTaskIpc(
     trigger?: string;
     requiresTrigger?: boolean;
     containerConfig?: RegisteredGroup['containerConfig'];
+    // For publish_event
+    eventType?: string;
+    payload?: Record<string, unknown>;
+    project?: string;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -485,6 +490,32 @@ export async function processTaskIpc(
       }
       break;
 
+    case 'publish_event':
+      if (
+        data.taskId &&
+        data.eventType &&
+        data.payload !== null &&
+        typeof data.payload === 'object'
+      ) {
+        eventBus.publish({
+          type: data.eventType,
+          source_agent: sourceGroup,
+          task_id: data.taskId,
+          project: data.project,
+          payload: data.payload ?? {},
+        });
+        logger.info(
+          { sourceGroup, taskId: data.taskId, eventType: data.eventType },
+          'Agent published pipeline event',
+        );
+      } else {
+        logger.warn(
+          { sourceGroup, taskId: data.taskId, eventType: data.eventType },
+          'Invalid publish_event IPC — missing required fields',
+        );
+      }
+      break;
+
     default: {
       // Check plugin IPC handlers
       const { getExtensionIpcHandlers } = await import('./extensions.js');
@@ -493,7 +524,8 @@ export async function processTaskIpc(
       if (handler) {
         // Extension IPC handlers expect { sendMessage } — proxy through router
         await handler(data, sourceGroup, isMain, {
-          sendMessage: (jid: string, text: string) => deps.router.send(jid, text),
+          sendMessage: (jid: string, text: string) =>
+            deps.router.send(jid, text),
         });
       } else {
         logger.warn({ type: data.type }, 'Unknown IPC task type');
