@@ -637,8 +637,13 @@ export async function main(): Promise<void> {
   }
 
   // Graceful shutdown handlers
+  let pipelineRunner: PipelineRunner | undefined;
+  let approvalGate: ApprovalGate | undefined;
+
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
+    pipelineRunner?.stop();
+    approvalGate?.stop();
     proxyServer?.close();
     await queue.shutdown();
     for (const ch of channels) await ch.disconnect();
@@ -807,11 +812,7 @@ export async function main(): Promise<void> {
   });
 
   // ── Pipeline Runner ──────────────────────────────────────────────────────
-  const pipelineRunner = new PipelineRunner(
-    eventBus,
-    router,
-    () => registeredGroups,
-  );
+  pipelineRunner = new PipelineRunner(eventBus, router, () => registeredGroups);
   pipelineRunner.start();
 
   // ── Approval Gate ─────────────────────────────────────────────────────────
@@ -819,11 +820,7 @@ export async function main(): Promise<void> {
     ([, g]) => g.folder === 'pipeline_orchestrator',
   );
   if (orchestratorEntry) {
-    const approvalGate = new ApprovalGate(
-      eventBus,
-      router,
-      orchestratorEntry[0],
-    );
+    approvalGate = new ApprovalGate(eventBus, router, orchestratorEntry[0]);
     approvalGate.start();
     logger.info(
       { jid: orchestratorEntry[0] },

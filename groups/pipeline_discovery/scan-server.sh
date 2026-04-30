@@ -14,7 +14,7 @@ PORTS=$(ss -tlnp 2>/dev/null | awk 'NR>1 {print $4}' | grep -oE '[0-9]+$' | sort
   | jq -R . | jq -s .)
 
 # Cloudflare tunnels
-TUNNELS=$(cloudflared tunnel list --output json 2>/dev/null || echo "[]")
+TUNNELS=$(cloudflared tunnel list --output json 2>/dev/null | jq -c '.' 2>/dev/null || echo "[]")
 
 # Disk usage
 DISK=$(df -h / 2>/dev/null | awk 'NR==2 {print "{\"used\":\""$3"\",\"available\":\""$4"\",\"percent\":\""$5"\"}"}')

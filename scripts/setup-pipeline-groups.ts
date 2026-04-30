@@ -3,10 +3,19 @@
  * One-time script to register all pipeline agent groups in the claudeclaw DB.
  * Run: npx tsx scripts/setup-pipeline-groups.ts
  *
+ * Required env vars (set before running):
+ *   MARNERO_DIR              — absolute path to the marnero project
+ *   COFFEESHOP_DIR           — absolute path to the coffeeshop project
+ *   CLASSIFIEDS_DIR          — absolute path to the classifieds project
+ *   NAILS_DIR                — absolute path to the nails project
+ *   AGENT_KEYS_DIR           — absolute path to your agent-keys directory
+ *   SUPERPOWERS_SKILLS_PATH  — absolute path to superpowers skills directory
+ *
  * IMPORTANT: You must first create each Telegram group, add the bot,
  * and run /chatid in each group to get the JID, then fill in CHAT_IDS below.
  */
 import Database from 'better-sqlite3'
+import { existsSync } from 'fs'
 import path from 'path'
 
 // ── FILL THESE IN after running /chatid in each Telegram group ────────────────
@@ -24,20 +33,31 @@ const CHAT_IDS: Record<string, string> = {
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
-const DB_PATH = path.join(process.cwd(), 'store/messages.db')
-const db = new Database(DB_PATH)
+function requireEnv(name: string): string {
+  const v = process.env[name]
+  if (!v) {
+    console.error(`Missing required env var: ${name}`)
+    process.exit(1)
+  }
+  return v
+}
 
-const SUPERPOWERS_SKILLS = process.env.SUPERPOWERS_SKILLS_PATH
-  ?? '/home/dmitriieremin/.claude/plugins/cache/claude-plugins-official/superpowers/5.0.7/skills'
+const DB_PATH = path.join(process.cwd(), 'store/messages.db')
+if (!existsSync(DB_PATH)) {
+  console.error(`DB not found at ${DB_PATH}. Start claudeclaw once first to initialize the schema.`)
+  process.exit(1)
+}
+
+const db = new Database(DB_PATH)
 
 const containerConfig = JSON.stringify({
   additionalMounts: [
-    { hostPath: '/data/marnero',                    containerPath: 'marnero',    readonly: false },
-    { hostPath: '/data/coffeeshop',                 containerPath: 'coffeeshop', readonly: false },
-    { hostPath: '/data/classifieds',                containerPath: 'classifieds',readonly: false },
-    { hostPath: '/home/dmitriieremin/nails',        containerPath: 'nails',      readonly: false },
-    { hostPath: '/home/dmitriieremin/agent-keys',   containerPath: 'agent-keys', readonly: true  },
-    { hostPath: SUPERPOWERS_SKILLS,                 containerPath: 'skills',     readonly: true  },
+    { hostPath: requireEnv('MARNERO_DIR'),            containerPath: 'marnero',    readonly: false },
+    { hostPath: requireEnv('COFFEESHOP_DIR'),          containerPath: 'coffeeshop', readonly: false },
+    { hostPath: requireEnv('CLASSIFIEDS_DIR'),         containerPath: 'classifieds',readonly: false },
+    { hostPath: requireEnv('NAILS_DIR'),               containerPath: 'nails',      readonly: false },
+    { hostPath: requireEnv('AGENT_KEYS_DIR'),          containerPath: 'agent-keys', readonly: true  },
+    { hostPath: requireEnv('SUPERPOWERS_SKILLS_PATH'), containerPath: 'skills',     readonly: true  },
   ],
 })
 
@@ -65,16 +85,18 @@ const insert = db.prepare(`
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `)
 
-for (const group of groups) {
-  const jid = CHAT_IDS[group.folder]
-  if (jid === 'tg:REPLACE_ME') {
-    console.warn(`⚠️  Skipping ${group.folder} — JID not set`)
-    continue
+try {
+  for (const group of groups) {
+    const jid = CHAT_IDS[group.folder]
+    if (jid === 'tg:REPLACE_ME') {
+      console.warn(`⚠️  Skipping ${group.folder} — JID not set`)
+      continue
+    }
+    insert.run(jid, group.name, group.folder, '@eremin_claude_bot',
+      new Date().toISOString(), containerConfig, 0, group.isMain, agentConfig, null)
+    console.log(`✅ Registered ${group.folder} → ${jid}`)
   }
-  insert.run(jid, group.name, group.folder, '@eremin_claude_bot',
-    new Date().toISOString(), containerConfig, 0, group.isMain, agentConfig, null)
-  console.log(`✅ Registered ${group.folder} → ${jid}`)
+  console.log('\nDone. Restart claudeclaw to pick up new groups.')
+} finally {
+  db.close()
 }
-
-console.log('\nDone. Restart claudeclaw to pick up new groups.')
-db.close()

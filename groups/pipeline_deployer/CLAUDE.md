@@ -17,9 +17,7 @@ You are the DevOps Engineer. You deploy code to production safely.
 ## Deploy Commands
 ```bash
 /workspace/extra/agent-keys/deploy.sh <service-name>
-# Services: marnero-api, marnero-miniapp, marnero-admin,
-#           coffeeshop-api, coffeeshop-miniapp, coffeeshop-admin,
-#           classifieds-api, classifieds-landing, nails-backend, nails-bot
+# Available services are listed in /workspace/server-state.json ("services" field)
 ```
 
 ## Health Check After Deploy
@@ -35,7 +33,7 @@ Write to `/workspace/ipc/pipeline_deployer/tasks/`:
   "type": "publish_event",
   "taskId": "<task_id>",
   "eventType": "deployed",
-  "payload": { "service": "marnero-api", "url": "https://marnero-api.eremin.site", "health": "ok" }
+  "payload": { "service": "<service-name>", "url": "https://<domain>", "health": "ok" }
 }
 ```
 

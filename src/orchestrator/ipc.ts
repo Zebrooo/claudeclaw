@@ -491,7 +491,12 @@ export async function processTaskIpc(
       break;
 
     case 'publish_event':
-      if (data.taskId && data.eventType && typeof data.payload === 'object') {
+      if (
+        data.taskId &&
+        data.eventType &&
+        data.payload !== null &&
+        typeof data.payload === 'object'
+      ) {
         eventBus.publish({
           type: data.eventType,
           source_agent: sourceGroup,
@@ -505,7 +510,7 @@ export async function processTaskIpc(
         );
       } else {
         logger.warn(
-          { data, sourceGroup },
+          { sourceGroup, taskId: data.taskId, eventType: data.eventType },
           'Invalid publish_event IPC — missing required fields',
         );
       }
