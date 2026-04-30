@@ -69,13 +69,25 @@ import {
   shouldDropMessage,
 } from './sender-allowlist.js';
 import { startSchedulerLoop } from './task-scheduler.js';
-import { callExtensionStartup, getExtensionDbSchema, wireExtensionHooks } from './extensions.js';
+import {
+  callExtensionStartup,
+  getExtensionDbSchema,
+  wireExtensionHooks,
+} from './extensions.js';
 // Load plugins (self-registering on import)
 // Extensions loaded from src/index.ts;
-import { Channel, MessageRouter, NewMessage, RegisteredGroup } from './types.js';
+import {
+  Channel,
+  MessageRouter,
+  NewMessage,
+  RegisteredGroup,
+} from './types.js';
 import { logger } from './logger.js';
 import { logAgentRun } from '../cost-tracking/index.js';
 import { startWebhookServer } from '../webhook/server.js';
+import { PipelineRunner } from './pipeline-runner.js';
+import { ApprovalGate } from './approval-gate.js';
+import { eventBus } from './event-bus.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -176,7 +188,10 @@ export function _setRegisteredGroups(
  * Process all pending messages for a group.
  * Called by the GroupQueue when it's this group's turn.
  */
-async function processGroupMessages(chatJid: string, router: MessageRouter): Promise<boolean> {
+async function processGroupMessages(
+  chatJid: string,
+  router: MessageRouter,
+): Promise<boolean> {
   const group = registeredGroups[chatJid];
   if (!group) return true;
 
@@ -595,14 +610,10 @@ export async function main(): Promise<void> {
   const allGroups = Object.values(getAllRegisteredGroups());
   const needsContainers =
     DEFAULT_RUNTIME === 'container' ||
-    allGroups.some(
-      (g) => (g.runtime || DEFAULT_RUNTIME) === 'container',
-    );
+    allGroups.some((g) => (g.runtime || DEFAULT_RUNTIME) === 'container');
   const needsSandbox =
     DEFAULT_RUNTIME === 'sandbox' ||
-    allGroups.some(
-      (g) => (g.runtime || DEFAULT_RUNTIME) === 'sandbox',
-    );
+    allGroups.some((g) => (g.runtime || DEFAULT_RUNTIME) === 'sandbox');
 
   if (needsContainers) {
     ensureContainerSystemRunning();
@@ -794,6 +805,36 @@ export async function main(): Promise<void> {
     writeGroupsSnapshot: (gf, im, ag, rj) =>
       writeGroupsSnapshot(gf, im, ag, rj),
   });
+
+  // ── Pipeline Runner ──────────────────────────────────────────────────────
+  const pipelineRunner = new PipelineRunner(
+    eventBus,
+    router,
+    () => registeredGroups,
+  );
+  pipelineRunner.start();
+
+  // ── Approval Gate ─────────────────────────────────────────────────────────
+  const orchestratorEntry = Object.entries(registeredGroups).find(
+    ([, g]) => g.folder === 'pipeline_orchestrator',
+  );
+  if (orchestratorEntry) {
+    const approvalGate = new ApprovalGate(
+      eventBus,
+      router,
+      orchestratorEntry[0],
+    );
+    approvalGate.start();
+    logger.info(
+      { jid: orchestratorEntry[0] },
+      'ApprovalGate started for orchestrator',
+    );
+  } else {
+    logger.warn(
+      'pipeline_orchestrator group not registered — ApprovalGate skipped',
+    );
+  }
+
   // Start webhook server if configured
   if (WEBHOOK_SECRET) {
     startWebhookServer(WEBHOOK_PORT, WEBHOOK_SECRET, {
@@ -807,11 +848,12 @@ export async function main(): Promise<void> {
     });
   }
 
-  queue.setProcessMessagesFn((chatJid) => processGroupMessages(chatJid, router));
+  queue.setProcessMessagesFn((chatJid) =>
+    processGroupMessages(chatJid, router),
+  );
   recoverPendingMessages();
   startMessageLoop().catch((err) => {
     logger.fatal({ err }, 'Message loop crashed unexpectedly');
     process.exit(1);
   });
 }
-
