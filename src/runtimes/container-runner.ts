@@ -263,8 +263,8 @@ function buildContainerArgs(
     }
   }
 
-  // Pass pipeline agent env vars (web search + GitLab)
-  const pipelineEnvKeys = ['BRAVE_API_KEY', 'GITLAB_TOKEN', 'GITLAB_HOST'];
+  // Pass pipeline agent env vars (GitLab)
+  const pipelineEnvKeys = ['GITLAB_TOKEN', 'GITLAB_HOST'];
   const pipelineEnv = readEnvFile(pipelineEnvKeys);
   for (const key of pipelineEnvKeys) {
     if (pipelineEnv[key]) {

@@ -29,11 +29,7 @@ Write to `/workspace/ipc/pipeline_developer/tasks/`:
 ```
 
 ## Internet Search
-```bash
-curl "https://api.search.brave.com/res/v1/web/search?q=<query>&count=5" \
-  -H "Accept: application/json" \
-  -H "X-Subscription-Token: $BRAVE_API_KEY"
-```
+Use the built-in `WebSearch` tool to research libraries, APIs, and solutions.
 
 ## GitLab
 ```bash

@@ -31,12 +31,7 @@ Write to `/workspace/ipc/pipeline_pm/tasks/`:
 ```
 
 ## Internet Search
-Use web search for researching similar features or UX patterns:
-```bash
-curl "https://api.search.brave.com/res/v1/web/search?q=<query>&count=5" \
-  -H "Accept: application/json" \
-  -H "X-Subscription-Token: $BRAVE_API_KEY"
-```
+Use the built-in `WebSearch` tool to research similar features or UX patterns.
 
 ## Server State
 Read `/workspace/server-state.json` to understand deployed services.
