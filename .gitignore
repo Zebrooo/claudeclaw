@@ -4,6 +4,11 @@ agent/runner/dist/
 store/
 data/
 groups/
+# Pipeline agent templates are committed (override above)
+!groups/pipeline_*/
+!groups/pipeline_*/CLAUDE.md
+!groups/pipeline_*/scan-server.sh
+!groups/pipeline_*/skills/
 logs/
 .env
 
