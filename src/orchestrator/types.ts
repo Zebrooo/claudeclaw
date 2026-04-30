@@ -33,14 +33,14 @@ export interface ContainerConfig {
 }
 
 export interface AgentConfig {
-  model?: string;              // 'sonnet' | 'opus' | 'haiku' | full model ID
+  model?: string; // 'sonnet' | 'opus' | 'haiku' | full model ID
   effort?: 'low' | 'medium' | 'high'; // Model reasoning effort (v2.1.78+)
-  systemPrompt?: string;       // Appended to agent's system context
-  allowedTools?: string[];     // Tool allowlist override (empty = use defaults)
-  disallowedTools?: string[];  // Tool blacklist (v2.1.78+ — applied on top of allowlist)
-  maxTurns?: number;           // Max conversation turns
-  costLimitUsd?: number;       // Per-run budget cap
-  allowedDomains?: string[];   // Extra network domains the sandbox agent can access (merged with base Anthropic + localhost)
+  systemPrompt?: string; // Appended to agent's system context
+  allowedTools?: string[]; // Tool allowlist override (empty = use defaults)
+  disallowedTools?: string[]; // Tool blacklist (v2.1.78+ — applied on top of allowlist)
+  maxTurns?: number; // Max conversation turns
+  costLimitUsd?: number; // Per-run budget cap
+  allowedDomains?: string[]; // Extra network domains the sandbox agent can access (merged with base Anthropic + localhost)
 }
 
 export interface RegisteredGroup {
@@ -166,3 +166,28 @@ export type OnChatMetadata = (
   channel?: string,
   isGroup?: boolean,
 ) => void;
+
+export interface PipelineEvent {
+  id: string;
+  type: string;
+  source_agent: string;
+  task_id: string;
+  project: string | null;
+  payload: string; // JSON string
+  status: 'pending' | 'dispatched' | 'done' | 'failed' | 'pending_approval';
+  requires_approval: number; // 0 or 1
+  iteration: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PipelineTask {
+  id: string;
+  description: string;
+  project: string | null;
+  status: 'active' | 'completed' | 'failed' | 'escalated';
+  current_agent: string | null;
+  iteration: number;
+  created_at: string;
+  updated_at: string;
+}
