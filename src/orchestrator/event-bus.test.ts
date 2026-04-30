@@ -1,29 +1,14 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import Database from 'better-sqlite3'
+import { _initTestDatabase } from './db.js'
 import { EventBus } from './event-bus.js'
-
-function makeDb(): Database.Database {
-  const db = new Database(':memory:')
-  db.exec(`
-    CREATE TABLE pipeline_events (
-      id TEXT PRIMARY KEY, type TEXT NOT NULL, source_agent TEXT NOT NULL,
-      task_id TEXT NOT NULL, project TEXT, payload TEXT NOT NULL DEFAULT '{}',
-      status TEXT NOT NULL DEFAULT 'pending', requires_approval INTEGER NOT NULL DEFAULT 0,
-      iteration INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-    );
-    CREATE TABLE pipeline_tasks (
-      id TEXT PRIMARY KEY, description TEXT NOT NULL, project TEXT,
-      status TEXT NOT NULL DEFAULT 'active', current_agent TEXT,
-      iteration INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-    );
-  `)
-  return db
-}
 
 describe('EventBus', () => {
   let bus: EventBus
 
-  beforeEach(() => { bus = new EventBus(makeDb()) })
+  beforeEach(() => {
+    _initTestDatabase()
+    bus = new EventBus()
+  })
 
   it('publishes an event with status pending', () => {
     const evt = bus.publish({ type: 'task_created', source_agent: 'orchestrator',
@@ -70,5 +55,19 @@ describe('EventBus', () => {
   it('allTypesPresent returns false when some events missing', () => {
     bus.publish({ type: 'tests_passed', source_agent: 'tester', task_id: 't1', payload: {} })
     expect(bus.allTypesPresent('t1', ['tests_passed', 'security_ok'])).toBe(false)
+  })
+
+  it('markDone changes status to done', () => {
+    const evt = bus.publish({ type: 'task_created', source_agent: 'orchestrator', task_id: 't1', payload: {} })
+    bus.markDone(evt.id)
+    expect(bus.getPendingEvents()).toHaveLength(0)
+  })
+
+  it('reject changes pending_approval to failed', () => {
+    const evt = bus.publish({ type: 'all_checks_passed', source_agent: 'orchestrator',
+      task_id: 't1', payload: {}, requires_approval: true })
+    bus.reject(evt.id)
+    expect(bus.getPendingApprovalEvents()).toHaveLength(0)
+    expect(bus.getPendingEvents()).toHaveLength(0)
   })
 })
