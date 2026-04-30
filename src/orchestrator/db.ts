@@ -7,6 +7,8 @@ import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import {
   NewMessage,
+  PipelineEvent,
+  PipelineTask,
   RegisteredGroup,
   ScheduledTask,
   TaskRunLog,
@@ -765,19 +767,7 @@ function migrateJsonState(): void {
 
 // ── Pipeline Events ──────────────────────────────────────────────────────────
 
-export function insertPipelineEvent(event: {
-  id: string;
-  type: string;
-  source_agent: string;
-  task_id: string;
-  project: string | null;
-  payload: string;
-  status: string;
-  requires_approval: number;
-  iteration: number;
-  created_at: string;
-  updated_at: string;
-}): void {
+export function insertPipelineEvent(event: PipelineEvent): void {
   getDb()
     .prepare(
       `
@@ -801,21 +791,21 @@ export function insertPipelineEvent(event: {
     );
 }
 
-export function getPipelineEventsByStatus(status: string): unknown[] {
+export function getPipelineEventsByStatus(status: string): PipelineEvent[] {
   return getDb()
     .prepare(
       `SELECT * FROM pipeline_events WHERE status = ? ORDER BY created_at ASC`,
     )
-    .all(status);
+    .all(status) as PipelineEvent[];
 }
 
 export function getPipelineEventsByTaskAndType(
   taskId: string,
   type: string,
-): unknown[] {
+): PipelineEvent[] {
   return getDb()
     .prepare(`SELECT * FROM pipeline_events WHERE task_id = ? AND type = ?`)
-    .all(taskId, type);
+    .all(taskId, type) as PipelineEvent[];
 }
 
 export function updatePipelineEventStatus(id: string, status: string): void {
@@ -826,16 +816,7 @@ export function updatePipelineEventStatus(id: string, status: string): void {
     .run(status, new Date().toISOString(), id);
 }
 
-export function insertPipelineTask(task: {
-  id: string;
-  description: string;
-  project: string | null;
-  status: string;
-  current_agent: string | null;
-  iteration: number;
-  created_at: string;
-  updated_at: string;
-}): void {
+export function insertPipelineTask(task: PipelineTask): void {
   getDb()
     .prepare(
       `
@@ -859,26 +840,29 @@ export function updatePipelineTask(
   id: string,
   updates: { status?: string; current_agent?: string; iteration?: number },
 ): void {
-  const now = new Date().toISOString();
+  const fields: string[] = [];
+  const values: unknown[] = [];
+
   if (updates.status !== undefined) {
-    getDb()
-      .prepare(
-        `UPDATE pipeline_tasks SET status = ?, updated_at = ? WHERE id = ?`,
-      )
-      .run(updates.status, now, id);
+    fields.push('status = ?');
+    values.push(updates.status);
   }
   if (updates.current_agent !== undefined) {
-    getDb()
-      .prepare(
-        `UPDATE pipeline_tasks SET current_agent = ?, updated_at = ? WHERE id = ?`,
-      )
-      .run(updates.current_agent, now, id);
+    fields.push('current_agent = ?');
+    values.push(updates.current_agent);
   }
   if (updates.iteration !== undefined) {
-    getDb()
-      .prepare(
-        `UPDATE pipeline_tasks SET iteration = ?, updated_at = ? WHERE id = ?`,
-      )
-      .run(updates.iteration, now, id);
+    fields.push('iteration = ?');
+    values.push(updates.iteration);
   }
+
+  if (fields.length === 0) return;
+
+  fields.push('updated_at = ?');
+  values.push(new Date().toISOString());
+  values.push(id);
+
+  getDb()
+    .prepare(`UPDATE pipeline_tasks SET ${fields.join(', ')} WHERE id = ?`)
+    .run(...values);
 }
