@@ -12,3 +12,4 @@ extensions/
 
 # Brainstorm sessions
 .superpowers/
+.worktrees/
