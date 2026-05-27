@@ -1661,9 +1661,23 @@ const wave = (function(){
   }
 
   // The log is the source of truth from /api/state: rebuild it each poll.
+  let _logSig = '';
   function renderLog(entries){
+    entries = entries || [];
+    // Skip the rebuild when nothing changed — otherwise the 3s poll keeps
+    // yanking the scroll position back while you're reading history.
+    const sig = entries.map(e => (e.ts||'') + '|' + e.role + '|' + e.text).join('\n');
+    if(sig === _logSig) return;
+    _logSig = sig;
+
+    // Preserve the user's scroll unless they were already at the newest line.
+    // (.cmd-log is column-reverse, so the "newest" edge is scrollTop ≈ 0.)
+    const maxUp = log.scrollHeight - log.clientHeight;
+    const nearNewest = Math.abs(log.scrollTop) < 8 || Math.abs(Math.abs(log.scrollTop) - maxUp) < 8;
+    const prevTop = log.scrollTop;
+
     log.innerHTML = '';
-    (entries||[]).forEach(e=>{
+    entries.forEach(e=>{
       const ln = document.createElement('div');
       const role = e.role || 'sys';
       ln.className = 'ln '+role;
@@ -1674,7 +1688,8 @@ const wave = (function(){
       ln.innerHTML = `<span class="ts">${tsOf(e.ts)}</span>${body}`;
       log.appendChild(ln);
     });
-    log.scrollTop = log.scrollHeight;
+    if(nearNewest) log.scrollTop = log.scrollHeight;   // stick to newest
+    else log.scrollTop = prevTop;                       // keep reading position
   }
 
   // Optimistic local echo for instant feedback before the next poll.
@@ -1814,13 +1829,19 @@ const wave = (function(){
     const sel = document.getElementById('voiceSel');
     if(!sel) return;
     sel.innerHTML = '';
-    if(ttsProvider === 'yandex'){
-      // SpeakKit neural voices (server-provided).
+    if(ttsProvider !== 'browser'){
+      // Server-side neural voices (Yandex SpeakKit or local Piper).
       const pref = savedYVoice() || yandexDefaultVoice;
+      const nice = (id)=>{
+        // 'ru_RU-irina-medium' → 'Irina' · 'alena' → 'Alena'
+        const m = id.match(/-([a-z]+)-/i);
+        const name = m ? m[1] : id;
+        return name[0].toUpperCase() + name.slice(1);
+      };
       yandexVoices.forEach(id => {
         const o = document.createElement('option');
         o.value = id;
-        o.textContent = id[0].toUpperCase() + id.slice(1) + ' ✨';   // ✨ = neural
+        o.textContent = nice(id) + ' ✨';   // ✨ = neural
         if(id === pref) o.selected = true;
         sel.appendChild(o);
       });
@@ -1860,7 +1881,7 @@ const wave = (function(){
       synth.speak(u);
     }catch(_){}
   }
-  function speakYandex(text){
+  function speakServer(text){
     stopSpeaking();
     const voice = savedYVoice() || yandexDefaultVoice;
     const url = '/api/tts?voice=' + encodeURIComponent(voice) + '&text=' + encodeURIComponent(text.slice(0,4400));
@@ -1873,7 +1894,7 @@ const wave = (function(){
   }
   function speak(text){
     if(!text) return;
-    if(ttsProvider === 'yandex') speakYandex(text);
+    if(ttsProvider !== 'browser') speakServer(text);   // yandex or piper via /api/tts
     else speakBrowser(text);
   }
   function listVoices(){

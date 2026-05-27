@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { synthesize, SPEAKKIT_VOICES } from './yandex-tts.mjs';
+import { synthesizePiper, listPiperVoices } from './piper-tts.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -53,6 +54,20 @@ const YA_TTS_KEY = env.YANDEX_SPEECHKIT_API_KEY || '';
 const YA_TTS_VOICE = env.YANDEX_SPEECHKIT_VOICE || 'alena';
 const YA_TTS_EMOTION = env.YANDEX_SPEECHKIT_EMOTION || 'good';
 const YA_TTS_FOLDER = env.YANDEX_SPEECHKIT_FOLDER_ID || '';
+// Piper — local neural TTS (no key, no cloud). Used when Yandex isn't set.
+const PIPER_BIN = env.PIPER_BIN || '';
+const PIPER_VOICES_DIR = env.PIPER_VOICES_DIR || '';
+const PIPER_LIB_DIR = env.PIPER_LIB_DIR || (PIPER_BIN ? path.dirname(PIPER_BIN) : '');
+const PIPER_VOICE = env.PIPER_VOICE || '';
+const piperVoices = PIPER_BIN && PIPER_VOICES_DIR ? listPiperVoices(PIPER_VOICES_DIR) : [];
+const piperEnabled = !!(PIPER_BIN && existsSync(PIPER_BIN) && piperVoices.length);
+
+// Provider priority: Yandex (cloud, if key) → Piper (local) → browser fallback.
+function ttsInfo() {
+  if (YA_TTS_KEY) return { provider: 'yandex', voices: SPEAKKIT_VOICES, voice: YA_TTS_VOICE };
+  if (piperEnabled) return { provider: 'piper', voices: piperVoices, voice: PIPER_VOICE || piperVoices[0] };
+  return { provider: 'browser', voices: [], voice: '' };
+}
 
 const DB_PATH = path.join(ROOT, 'store', 'messages.db');
 const db = new Database(DB_PATH, { readonly: true, fileMustExist: true });
@@ -210,11 +225,7 @@ function buildState() {
     works, // [{key,label,screen}] ordered — right-column panels, grouped by screen
     tasks, // { <workKey>: [...], other: [...] }
     log: buildLog(),
-    tts: {
-      provider: YA_TTS_KEY ? 'yandex' : 'browser',
-      voices: YA_TTS_KEY ? SPEAKKIT_VOICES : [],
-      voice: YA_TTS_VOICE,
-    },
+    tts: ttsInfo(),
     status: {
       counts,
       blocks: events.length,
@@ -314,26 +325,44 @@ const server = createServer(async (req, res) => {
   // back OggOpus. The API key stays server-side. Cookie/header token-gated.
   if (req.method === 'GET' && url.pathname === '/api/tts') {
     if (!authorized(req)) return sendJson(res, 401, { error: 'unauthorized' });
-    if (!YA_TTS_KEY) return sendJson(res, 503, { error: 'yandex tts not configured' });
     const text = (url.searchParams.get('text') || '').slice(0, 4500);
-    const voice = url.searchParams.get('voice') || YA_TTS_VOICE;
     if (!text.trim()) return sendJson(res, 400, { error: 'empty text' });
-    synthesize(text, {
-      apiKey: YA_TTS_KEY,
-      voice,
-      emotion: YA_TTS_EMOTION,
-      folderId: YA_TTS_FOLDER || undefined,
-    })
-      .then((audio) => {
-        res.writeHead(200, {
-          'Content-Type': 'audio/ogg',
-          'Content-Length': audio.length,
-          'Cache-Control': 'no-store',
-        });
-        res.end(audio);
+    const reqVoice = url.searchParams.get('voice') || '';
+
+    const stream = (mime, audio) => {
+      res.writeHead(200, {
+        'Content-Type': mime,
+        'Content-Length': audio.length,
+        'Cache-Control': 'no-store',
+      });
+      res.end(audio);
+    };
+    const fail = (err) => sendJson(res, 502, { error: String(err && err.message) });
+
+    if (YA_TTS_KEY) {
+      synthesize(text, {
+        apiKey: YA_TTS_KEY,
+        voice: reqVoice || YA_TTS_VOICE,
+        emotion: YA_TTS_EMOTION,
+        folderId: YA_TTS_FOLDER || undefined,
       })
-      .catch((err) => sendJson(res, 502, { error: String(err && err.message) }));
-    return;
+        .then((audio) => stream('audio/ogg', audio))
+        .catch(fail);
+      return;
+    }
+    if (piperEnabled) {
+      const voice = piperVoices.includes(reqVoice) ? reqVoice : PIPER_VOICE || piperVoices[0];
+      synthesizePiper(text, {
+        bin: PIPER_BIN,
+        voicesDir: PIPER_VOICES_DIR,
+        libDir: PIPER_LIB_DIR,
+        voice,
+      })
+        .then((audio) => stream('audio/wav', audio))
+        .catch(fail);
+      return;
+    }
+    return sendJson(res, 503, { error: 'tts not configured' });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/command') {
