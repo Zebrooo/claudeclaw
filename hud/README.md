@@ -52,12 +52,16 @@ next run is today.
 ## Configuration (claudeclaw `.env`)
 
 ```
-WEBHOOK_PORT=3100
+WEBHOOK_PORT=3105          # MUST be a free port — 3100 is used by another app here
 WEBHOOK_SECRET=<random>     # enables the claudeclaw webhook + signs HUD commands
 HUD_PORT=3200
 HUD_TOKEN=<random>          # gate for the HUD page + API
 HUD_GROUP_FOLDER=telegram_main
 ```
+
+> The webhook bind is non-fatal: if `WEBHOOK_PORT` is occupied the bot logs a
+> warning and keeps running (the web console just won't reach it). Pick a free
+> port and restart.
 
 ## Run
 

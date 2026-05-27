@@ -5,7 +5,9 @@ import type { MessageIngestion } from '../orchestrator/types.js';
 
 export interface WebhookDeps {
   ingestion: MessageIngestion;
-  findGroupByFolder: (folder: string) => { jid: string; name: string } | undefined;
+  findGroupByFolder: (
+    folder: string,
+  ) => { jid: string; name: string } | undefined;
 }
 
 // Rate limiting: per-group request counter
@@ -25,7 +27,11 @@ function checkRateLimit(groupFolder: string): boolean {
   return true;
 }
 
-export function verifySignature(secret: string, payload: string, signature: string): boolean {
+export function verifySignature(
+  secret: string,
+  payload: string,
+  signature: string,
+): boolean {
   const expected = crypto
     .createHmac('sha256', secret)
     .update(payload)
@@ -43,13 +49,19 @@ export function verifySignature(secret: string, payload: string, signature: stri
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     let data = '';
-    req.on('data', (chunk: string) => { data += chunk; });
+    req.on('data', (chunk: string) => {
+      data += chunk;
+    });
     req.on('end', () => resolve(data));
     req.on('error', reject);
   });
 }
 
-function sendJson(res: ServerResponse, status: number, body: Record<string, unknown>): void {
+function sendJson(
+  res: ServerResponse,
+  status: number,
+  body: Record<string, unknown>,
+): void {
   res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(body));
 }
@@ -127,6 +139,23 @@ export function startWebhookServer(
       sendJson(res, 200, { status: 'accepted', group: group.name });
     } else {
       sendJson(res, 200, { status: 'dropped', group: group.name });
+    }
+  });
+
+  // A port conflict must never crash the orchestrator: log and continue
+  // running the bot without the webhook rather than letting an unhandled
+  // 'error' event take down the process.
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      logger.error(
+        { port },
+        'Webhook port in use — webhook disabled, bot continues. Set a free WEBHOOK_PORT in .env.',
+      );
+    } else {
+      logger.error(
+        { err, port },
+        'Webhook server error — webhook disabled, bot continues',
+      );
     }
   });
 
