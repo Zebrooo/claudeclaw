@@ -34,14 +34,22 @@ function die(msg) { console.error(msg); process.exit(1); }
 if (cmd === 'task') {
   const title = flag('title');
   if (!title) die('--title required');
+  // Enforce the "ask for the time first" rule deterministically: a task must
+  // carry a --due (when it's due) OR be explicitly marked --no-deadline. This
+  // makes it impossible to record a task without first clarifying the time.
+  const due = flag('due');
+  const noDeadline = args.includes('--no-deadline');
+  if (!due && !noDeadline) {
+    die('refusing to record without a time: pass --due "<когда>" (спроси у пользователя) or --no-deadline if he said there is none');
+  }
   const reqWork = flag('work') || 'other';
   const valid = db.prepare('SELECT key FROM hud_works WHERE key = ?').get(reqWork);
   const work = valid ? reqWork : 'other';
   const kind = ['task', 'promise', 'awaiting'].includes(flag('kind')) ? flag('kind') : 'task';
   const info = db
-    .prepare(`INSERT INTO hud_tasks (work, title, project, kind, done, created_at) VALUES (?, ?, ?, ?, 0, ?)`)
-    .run(work, title, flag('project') || null, kind, now);
-  out({ ok: true, added: 'task', id: info.lastInsertRowid, work, title, kind });
+    .prepare(`INSERT INTO hud_tasks (work, title, project, kind, due, done, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)`)
+    .run(work, title, flag('project') || null, kind, noDeadline ? null : due, now);
+  out({ ok: true, added: 'task', id: info.lastInsertRowid, work, title, kind, due: noDeadline ? null : due });
 } else if (cmd === 'event') {
   const title = flag('title');
   const start = flag('start');
@@ -64,11 +72,12 @@ if (cmd === 'task') {
 } else {
   console.log(
     'usage:\n' +
-    '  node hud/board.mjs task  --work <key> --title "..." [--project "..."] [--kind task|promise|awaiting]\n' +
+    '  node hud/board.mjs task  --work <key> --title "..." (--due "<когда>" | --no-deadline) [--project "..."] [--kind task|promise|awaiting]\n' +
     '  node hud/board.mjs event --title "..." --start <ISO> [--end <ISO>] [--project "..."]\n' +
     '  node hud/board.mjs list\n' +
     '  node hud/board.mjs done  --id <id>\n' +
-    'work keys: yandex, enspire, family, projects, other',
+    'work keys: yandex, enspire, family, projects, other\n' +
+    'note: task REQUIRES --due "<время/срок>" or --no-deadline — ask the user for the time first.',
   );
 }
 db.close();

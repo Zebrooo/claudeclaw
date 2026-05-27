@@ -181,7 +181,7 @@ function buildTasks(works) {
   try {
     const rows = db
       .prepare(
-        `SELECT work, title, project, kind, created_at FROM hud_tasks WHERE done = 0 ORDER BY id DESC`,
+        `SELECT work, title, project, kind, due, created_at FROM hud_tasks WHERE done = 0 ORDER BY id DESC`,
       )
       .all();
     for (const r of rows) {
@@ -191,6 +191,7 @@ function buildTasks(works) {
         title: r.title,
         project: r.project || '',
         kind: r.kind || 'task',
+        due: r.due || '',
         age: `${ageDays(r.created_at)}d`,
       });
     }
