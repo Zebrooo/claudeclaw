@@ -36,16 +36,26 @@ export interface WorkArea {
   key: string;
   label: string;
   hints: string[];
+  /** Swipeable HUD screen this area belongs to (main / family / projects / …). */
+  screen: string;
 }
 
 /** Configured work areas (right-column panels), ordered. Data-driven via hud_works. */
 export function getWorks(): WorkArea[] {
   const rows = getDb()
-    .prepare(`SELECT key, label, hints FROM hud_works ORDER BY sort_order, id`)
-    .all() as Array<{ key: string; label: string; hints: string | null }>;
+    .prepare(
+      `SELECT key, label, hints, screen FROM hud_works ORDER BY sort_order, id`,
+    )
+    .all() as Array<{
+    key: string;
+    label: string;
+    hints: string | null;
+    screen: string | null;
+  }>;
   return rows.map((r) => ({
     key: r.key,
     label: r.label,
+    screen: r.screen || 'main',
     hints: (r.hints || '')
       .split(',')
       .map((h) => h.trim())

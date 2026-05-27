@@ -21,13 +21,21 @@ import { HUD_SCHEMA } from './schema.js';
 import { classifyMessage } from './classifier.js';
 import { appendLog, getWorks, insertEvent, insertTask } from './store.js';
 
+// The board (timeline/works/awaiting) is fed from the Telegram main group.
 const HUD_GROUP_FOLDER =
   process.env.HUD_GROUP_FOLDER ||
   readEnvFile(['HUD_GROUP_FOLDER']).HUD_GROUP_FOLDER ||
   'telegram_main';
 
+// The web HUD console is its own ARIA group, delivered via the local `hud:`
+// channel so replies never echo to Telegram. Both groups feed the HUD.
+const HUD_CONSOLE_FOLDER =
+  process.env.HUD_CONSOLE_FOLDER ||
+  readEnvFile(['HUD_CONSOLE_FOLDER']).HUD_CONSOLE_FOLDER ||
+  'aria';
+
 function isHudGroup(folder?: string): boolean {
-  return folder === HUD_GROUP_FOLDER;
+  return folder === HUD_GROUP_FOLDER || folder === HUD_CONSOLE_FOLDER;
 }
 
 async function captureInbound(prompt: string): Promise<void> {

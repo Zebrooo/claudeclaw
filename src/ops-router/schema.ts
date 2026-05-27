@@ -49,12 +49,20 @@ export const HUD_SCHEMA: string[] = [
     label TEXT NOT NULL,
     hints TEXT,
     sort_order INTEGER NOT NULL DEFAULT 0,
+    screen TEXT NOT NULL DEFAULT 'main',
     created_at TEXT NOT NULL
   )`,
+  // NOTE: the extension-schema runner has no per-statement try/catch, so a
+  // non-idempotent ALTER would crash startup once the column exists. Existing
+  // DBs are migrated out-of-band (one-off node script); fresh DBs get `screen`
+  // from the CREATE above.
   // Default work areas — extend by inserting rows (see hud/add-work.mjs).
-  `INSERT OR IGNORE INTO hud_works (key, label, hints, sort_order, created_at) VALUES
-     ('yandex', 'YANDEX', 'yandex,яндекс', 1, datetime('now')),
-     ('enspire', 'ENSPIRE', 'enspire,ensol,azure,.net,core,энспайр', 2, datetime('now'))`,
+  // `screen` groups areas into swipeable HUD screens (main / family / projects / …).
+  `INSERT OR IGNORE INTO hud_works (key, label, hints, sort_order, screen, created_at) VALUES
+     ('yandex', 'YANDEX', 'yandex,яндекс', 1, 'main', datetime('now')),
+     ('enspire', 'ENSPIRE', 'enspire,ensol,azure,.net,core,энспайр', 2, 'main', datetime('now')),
+     ('family', 'СЕМЬЯ', 'семья,дом,family,дети,жена,быт', 10, 'family', datetime('now')),
+     ('projects', 'ПРОЕКТЫ', 'проект,сайд,side,pet,стартап,startup,личн', 20, 'projects', datetime('now'))`,
 
   `CREATE TABLE IF NOT EXISTS hud_tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

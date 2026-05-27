@@ -11,6 +11,10 @@ groups/
 !groups/pipeline_*/skills/
 logs/
 .env
+# never commit .env backups — they contain real tokens
+.env.bak*
+.env.*.bak
+*.pid
 
 # Installable extensions (per-instance, not checked in)
 extensions/

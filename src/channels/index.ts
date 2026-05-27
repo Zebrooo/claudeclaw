@@ -2,3 +2,4 @@
 // Slack is now an installable extension (extensions/claudeclaw-slack/)
 import './whatsapp.js';
 import './telegram.js';
+import './hud-channel.js';

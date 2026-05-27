@@ -748,10 +748,45 @@ body{
 
 /* ===== work-area task panels (right column, data-driven) ===== */
 .right{ gap: var(--gutter) }
+
+/* swipeable screens carousel */
+.screens-viewport{
+  flex:1 1 auto; min-height:0; position:relative; overflow:hidden;
+  touch-action:pan-y;            /* let vertical task scroll through */
+}
+.screens-track{ display:flex; height:100%; will-change:transform }
+.screen{
+  flex:0 0 auto; height:100%; min-height:0;
+  display:flex; flex-direction:column; gap:var(--gutter);
+  padding:0 2px;                 /* tiny breathing room, avoids clipping glow */
+}
+.screen-nav{
+  flex:0 0 auto; display:flex; align-items:center; justify-content:space-between;
+  padding:10px 2px 0;
+}
+.screen-name{ font-family:var(--f-mono); font-size:10px; letter-spacing:.28em; color:var(--fg-mute) }
+.dots{ display:flex; gap:7px }
+.dots .dot{
+  width:7px; height:7px; border-radius:50%; cursor:pointer;
+  background:rgba(79,217,214,.22); transition:transform .3s, background .3s, box-shadow .3s;
+}
+.dots .dot.on{ background:var(--a-300); box-shadow:0 0 8px var(--a-300); transform:scale(1.2) }
+
 .right .panel.work{ flex:1 1 0; min-height:0; display:flex; flex-direction:column; overflow:hidden }
-.task-list{ display:flex; flex-direction:column; gap:8px; overflow:hidden; padding-right:2px }
+.right .panel.work .panel-h{ flex:0 0 auto }
+/* task-list takes the panel's leftover height and scrolls when it overflows
+   instead of squeezing the rows into illegibility */
+.task-list{
+  flex:1 1 auto; min-height:0; overflow-y:auto;
+  display:flex; flex-direction:column; gap:8px; padding-right:4px;
+  scrollbar-width:thin; scrollbar-color: rgba(79,217,214,.35) transparent;
+}
+.task-list::-webkit-scrollbar{ width:5px }
+.task-list::-webkit-scrollbar-thumb{ background:rgba(79,217,214,.35); border-radius:3px }
+.task-list::-webkit-scrollbar-track{ background:transparent }
 .task-empty{ font-family:var(--f-mono); font-size:11px; color:var(--fg-mute); letter-spacing:.2em; padding:4px 2px }
 .task-row{
+  flex:0 0 auto;
   display:grid; grid-template-columns:9px 1fr auto; gap:9px; align-items:start;
   padding:6px 2px; border-bottom:1px dashed rgba(79,217,214,.10);
 }
@@ -1041,6 +1076,14 @@ const sphere = (function(){
   let activeMix = 0;        // smoothly interpolated 0..1
   let lastT = performance.now();
 
+  // --- Interactive cursor reaction (aboutluca.com-style) ---
+  // The whole sphere leans toward the pointer (yaw+pitch parallax) and spins
+  // faster the more the pointer moves. All values ease smoothly back to rest.
+  let tiltYawTarget = 0, tiltPitchTarget = 0;  // desired lean, set from pointer
+  let tiltYaw = 0, tiltPitch = 0;              // eased current lean
+  let spinBoost = 0;                            // extra angular speed (decays)
+  const MAX_TILT = 0.42;                        // max lean in radians (~24°)
+
   // Active palette — sphere shifts to amber (matching the inner matter's
   // light color) when ARIA is actively listening.
   const IDLE_RGB   = [ 79, 217, 214];   // teal
@@ -1065,6 +1108,15 @@ const sphere = (function(){
     burst *= Math.pow(0.001, dt);
     // smooth ease toward target active state
     activeMix += ((active ? 1 : 0) - activeMix) * Math.min(1, dt*5);
+
+    // Ease the lean toward the pointer target; decay the spin boost. The tilt
+    // target is continuously nudged back to 0 so the sphere recenters when the
+    // pointer goes idle.
+    tiltYaw   += (tiltYawTarget   - tiltYaw)   * Math.min(1, dt*4);
+    tiltPitch += (tiltPitchTarget - tiltPitch) * Math.min(1, dt*4);
+    spinBoost *= Math.pow(0.12, dt);
+    const giYaw = Math.sin(tiltYaw),  giCosYaw = Math.cos(tiltYaw);
+    const giPit = Math.sin(tiltPitch), giCosPit = Math.cos(tiltPitch);
 
     ctx.clearRect(0,0,W,H);
     const cx = W/2, cy = H/2;
@@ -1139,7 +1191,7 @@ const sphere = (function(){
     const drawList = [];
     for(let li=0; li<layers.length; li++){
       const L = layers[li];
-      L.ang += dt * L.angV;
+      L.ang += dt * L.angV * (1 + spinBoost);
       const sinA = Math.sin(L.ang), cosA = Math.cos(L.ang);
 
       // Per-layer wave tuning: outer = larger amp + faster + more wavelets.
@@ -1162,9 +1214,18 @@ const sphere = (function(){
         const px = p.ux * dispMul, py = p.uy * dispMul, pz = p.uz * dispMul;
         // Rotate around layer's own axis (Rodrigues)
         const r1 = rotAxis({x:px, y:py, z:pz}, L.axis, sinA, cosA);
-        const sx0 = r1.x * L.baseR;
-        const sy0 = r1.y * L.baseR;
-        const sz0 = r1.z * L.baseR;
+        let sx0 = r1.x * L.baseR;
+        let sy0 = r1.y * L.baseR;
+        let sz0 = r1.z * L.baseR;
+        // Interactive lean toward the pointer: yaw around Y, then pitch around X.
+        {
+          const nx = sx0*giCosYaw + sz0*giYaw;
+          const nz = -sx0*giYaw   + sz0*giCosYaw;
+          sx0 = nx; sz0 = nz;
+          const ny = sy0*giCosPit - sz0*giPit;
+          const nz2 = sy0*giPit   + sz0*giCosPit;
+          sy0 = ny; sz0 = nz2;
+        }
         // View pitch
         const y2 =  vCosP*sy0 - vSinP*sz0;
         const z2 =  vSinP*sy0 + vCosP*sz0;
@@ -1238,8 +1299,36 @@ const sphere = (function(){
     pulse(strength=1){ burst = Math.min(1.4, burst + 0.55*strength); },
     setActive(v){ active = !!v; return active; },
     toggleActive(){ active = !active; return active; },
-    isActive(){ return active; }
+    isActive(){ return active; },
+    // nx,ny in [-1..1] relative to sphere center → lean target.
+    setTilt(nx, ny){
+      tiltYawTarget   = Math.max(-1, Math.min(1, nx)) * MAX_TILT;
+      tiltPitchTarget = Math.max(-1, Math.min(1, ny)) * MAX_TILT;
+    },
+    // Add a transient spin boost (e.g. from pointer velocity or a swipe).
+    addSpin(s){ spinBoost = Math.min(6, spinBoost + s); }
   };
+})();
+
+/* ---------- SPHERE reacts to the cursor (aboutluca.com vibe) ----------
+   Moving the mouse anywhere leans the sphere toward the pointer and spins it
+   faster the quicker you move; it recenters when the pointer leaves. */
+(function attachSphereCursor(){
+  let lastX = null, lastY = null, lastT = performance.now();
+  addEventListener('pointermove', (e) => {
+    const cx = window.innerWidth / 2, cy = window.innerHeight / 2;
+    sphere.setTilt((e.clientX - cx) / cx, -(e.clientY - cy) / cy);
+    const now = performance.now();
+    const dt = Math.max(8, now - lastT); lastT = now;
+    if (lastX !== null) {
+      const v = Math.hypot(e.clientX - lastX, e.clientY - lastY) / dt; // px/ms
+      sphere.addSpin(Math.min(0.6, v * 0.22));
+    }
+    lastX = e.clientX; lastY = e.clientY;
+  }, { passive: true });
+  // Recenter when the pointer leaves the window.
+  addEventListener('pointerout', (e) => { if (!e.relatedTarget) sphere.setTilt(0, 0); });
+  addEventListener('blur', () => sphere.setTilt(0, 0));
 })();
 
 /* ---------- TIMELINE / FRONTS / AWAITING (live data) ----------
@@ -1306,37 +1395,150 @@ function renderTimeline(blocks){
 
 // Right column: one panel per work area (from state.works, in order) + ПРОЧЕЕ.
 // Fully data-driven so new projects added to hud_works appear automatically.
+/* ===== Right column = swipeable screens (iPhone-style) =====
+   Work areas are grouped by their `screen` field into horizontal screens you
+   swipe between; the sphere spins faster on each transition. */
+const SCREEN_ORDER  = ['main', 'family', 'projects'];
+const SCREEN_LABELS = { main: 'РАБОТА', family: 'СЕМЬЯ', projects: 'САЙД-ПРОЕКТЫ' };
+
+let _worksSig = '';      // skip rebuild when nothing changed (keeps swipe stable)
+let _curScreen = 0;      // persists across re-renders
+
+function buildPanel(p, items){
+  const panel = document.createElement('div');
+  panel.className = 'panel work';
+  panel.innerHTML = `
+    <span class="ck-bl"></span><span class="ck-br"></span>
+    <div class="panel-h"><span><span class="dot"></span>${esc(p.label)}</span>
+      <span class="h-meta">${String(items.length).padStart(2,'0')}</span></div>
+    <div class="task-list"></div>`;
+  const list = panel.querySelector('.task-list');
+  if(items.length === 0){
+    const e = document.createElement('div'); e.className='task-empty'; e.textContent='—';
+    list.appendChild(e);
+  }
+  items.forEach(t => {
+    const row = document.createElement('div');
+    row.className = 'task-row' + (t.kind==='awaiting' ? ' is-wait' : t.kind==='promise' ? ' is-promise' : '');
+    const proj = t.project ? ` <small>${esc(t.project)}</small>` : '';
+    row.innerHTML = `<span class="t-dot"></span><span class="t-text">${esc(t.title)}${proj}</span><span class="t-age">${esc(t.age)}</span>`;
+    list.appendChild(row);
+  });
+  return panel;
+}
+
 function renderWorks(state){
   const root = document.getElementById('workPanels');
-  const works = (state.works || []).map(w => ({ key: w.key, label: w.label }));
+  const works = state.works || [];
   const tasks = state.tasks || {};
-  const panels = works.concat([{ key: 'other', label: 'ПРОЧЕЕ' }]);
+
+  // Group work areas by screen, preserving first-seen order.
+  const byScreen = {}; const seen = [];
+  works.forEach(w => {
+    const s = w.screen || 'main';
+    if(!byScreen[s]){ byScreen[s] = []; seen.push(s); }
+    byScreen[s].push({ key: w.key, label: w.label });
+  });
+  if(!byScreen.main){ byScreen.main = []; seen.push('main'); }
+  // Preferred screens first, then any extras in their original order.
+  const screens = seen.slice().sort((a,b)=>{
+    const ia = SCREEN_ORDER.indexOf(a), ib = SCREEN_ORDER.indexOf(b);
+    return (ia<0?99:ia) - (ib<0?99:ib);
+  });
+
+  const sig = JSON.stringify({ screens, works: works.map(w=>[w.key,w.label,w.screen]), tasks });
+  if(sig === _worksSig) return;   // data unchanged → leave the carousel alone
+  _worksSig = sig;
+  if(_curScreen >= screens.length) _curScreen = 0;
 
   root.innerHTML = '';
-  panels.forEach(p => {
-    const items = tasks[p.key] || [];
-    const panel = document.createElement('div');
-    panel.className = 'panel work';
-    panel.innerHTML = `
-      <span class="ck-bl"></span><span class="ck-br"></span>
-      <div class="panel-h"><span><span class="dot"></span>${esc(p.label)}</span>
-        <span class="h-meta">${String(items.length).padStart(2,'0')}</span></div>
-      <div class="task-list"></div>`;
-    const list = panel.querySelector('.task-list');
-    if(items.length === 0){
-      const e = document.createElement('div'); e.className='task-empty'; e.textContent='—';
-      list.appendChild(e);
-    }
-    items.forEach(t => {
-      const row = document.createElement('div');
-      row.className = 'task-row' + (t.kind==='awaiting' ? ' is-wait' : t.kind==='promise' ? ' is-promise' : '');
-      const proj = t.project ? ` <small>${esc(t.project)}</small>` : '';
-      row.innerHTML = `<span class="t-dot"></span><span class="t-text">${esc(t.title)}${proj}</span><span class="t-age">${esc(t.age)}</span>`;
-      list.appendChild(row);
-    });
-    root.appendChild(panel);
+  const viewport = document.createElement('div'); viewport.className = 'screens-viewport';
+  const track = document.createElement('div'); track.className = 'screens-track';
+  track.style.width = (screens.length*100) + '%';
+
+  screens.forEach(sk => {
+    const screen = document.createElement('section'); screen.className = 'screen';
+    screen.style.width = (100/screens.length) + '%';
+    const panels = (byScreen[sk] || []).slice();
+    if(sk === 'main') panels.push({ key: 'other', label: 'ПРОЧЕЕ' });
+    if(panels.length === 0) panels.push({ key: '__none__', label: SCREEN_LABELS[sk] || sk.toUpperCase() });
+    panels.forEach(p => screen.appendChild(buildPanel(p, tasks[p.key] || [])));
+    track.appendChild(screen);
   });
+  viewport.appendChild(track);
+  root.appendChild(viewport);
+
+  // Nav row: current screen name + dots.
+  const nav = document.createElement('div'); nav.className = 'screen-nav';
+  const name = document.createElement('span'); name.className = 'screen-name';
+  const dots = document.createElement('div'); dots.className = 'dots';
+  screens.forEach((sk,i)=>{
+    const d = document.createElement('span'); d.className = 'dot' + (i===_curScreen?' on':'');
+    d.title = SCREEN_LABELS[sk] || sk;
+    d.addEventListener('click', ()=> screensCtl.goTo(i));
+    dots.appendChild(d);
+  });
+  nav.appendChild(name); nav.appendChild(dots);
+  root.appendChild(nav);
+
+  screensCtl.attach(viewport, track, name, dots, screens);
 }
+
+const screensCtl = (function(){
+  let viewport=null, track=null, nameEl=null, dotsEl=null, keys=[], n=1;
+  let startX=0, active=false, dragDX=0;
+
+  function label(i){ return (SCREEN_LABELS[keys[i]] || keys[i] || '').toUpperCase(); }
+  function apply(animate){
+    if(!track) return;
+    track.style.transition = animate ? 'transform .5s cubic-bezier(.22,.61,.36,1)' : 'none';
+    track.style.transform  = `translateX(${-_curScreen*100/n}%)`;
+    if(nameEl) nameEl.textContent = label(_curScreen);
+    if(dotsEl) [...dotsEl.children].forEach((d,i)=> d.classList.toggle('on', i===_curScreen));
+  }
+  function goTo(i){
+    const ni = Math.max(0, Math.min(n-1, i));
+    if(ni !== _curScreen){ _curScreen = ni; try{ sphere.addSpin(2.6); }catch(_){} }
+    apply(true);
+  }
+  function dragTo(dx){
+    const pct = -_curScreen*100/n + (dx/viewport.clientWidth)*100/n;
+    track.style.transition = 'none';
+    track.style.transform = `translateX(${pct}%)`;
+  }
+  function release(){
+    if(!active) return; active = false;
+    if(Math.abs(dragDX) > viewport.clientWidth*0.16) goTo(_curScreen + (dragDX<0?1:-1));
+    else apply(true);
+  }
+  function attach(vp, t, nm, dt, ks){
+    viewport=vp; track=t; nameEl=nm; dotsEl=dt; keys=ks; n=ks.length;
+    apply(false);
+    vp.addEventListener('touchstart', e=>{ startX=e.touches[0].clientX; active=true; dragDX=0; }, {passive:true});
+    vp.addEventListener('touchmove',  e=>{ if(!active)return; dragDX=e.touches[0].clientX-startX; dragTo(dragDX); }, {passive:true});
+    vp.addEventListener('touchend', release);
+    vp.addEventListener('pointerdown', e=>{ if(e.pointerType==='touch')return; startX=e.clientX; active=true; dragDX=0; });
+    vp.addEventListener('pointermove', e=>{ if(!active||e.pointerType==='touch')return; dragDX=e.clientX-startX; dragTo(dragDX); });
+    vp.addEventListener('pointerup', e=>{ if(e.pointerType==='touch')return; release(); });
+    vp.addEventListener('pointerleave', ()=>{ if(active) release(); });
+    let wheelLock=0;
+    vp.addEventListener('wheel', e=>{
+      if(Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
+      e.preventDefault();
+      const now=Date.now(); if(now<wheelLock) return;
+      if(Math.abs(e.deltaX) > 18){ wheelLock = now+450; goTo(_curScreen + (e.deltaX>0?1:-1)); }
+    }, {passive:false});
+  }
+  return { attach, goTo, next(){goTo(_curScreen+1)}, prev(){goTo(_curScreen-1)} };
+})();
+
+// Arrow keys flip screens (unless typing in the console).
+addEventListener('keydown', (e)=>{
+  const tag = (e.target && e.target.tagName) || '';
+  if(tag==='INPUT' || tag==='TEXTAREA') return;
+  if(e.key==='ArrowRight') screensCtl.next();
+  else if(e.key==='ArrowLeft') screensCtl.prev();
+});
 
 /* ---------- WAVE VISUALIZER ---------- */
 const wave = (function(){
@@ -1446,8 +1648,22 @@ const wave = (function(){
     log.scrollTop = log.scrollHeight;
   }
 
+  // Client-side voice/TTS controls — handled in the browser, never sent to the bot.
+  function handleLocalCommand(text){
+    const t = text.trim().toLowerCase();
+    if(t === 'голос список' || t === 'список голосов'){ echo(text); listVoices(); return true; }
+    if(t === 'голос вкл' || t === 'озвучка вкл'){ echo(text); ttsOn = true; echo('озвучка включена','aria'); return true; }
+    if(t === 'голос выкл' || t === 'озвучка выкл' || t === 'тихо' || t === 'молчи'){
+      echo(text); ttsOn = false; try{ synth && synth.cancel(); }catch(_){}; echo('озвучка выключена','aria'); return true;
+    }
+    const m = t.match(/^голос\s+(.+)$/);
+    if(m){ echo(text); setVoice(m[1]); return true; }
+    return false;
+  }
+
   async function send(text){
     if(!text.trim()) return;
+    if(handleLocalCommand(text)) return;   // voice/TTS controls stay client-side
     echo(text);
     wrap.classList.remove('flash'); void wrap.offsetWidth; wrap.classList.add('flash');
     wave.pulse(1.0); sphere.pulse(1.0);
@@ -1509,16 +1725,72 @@ const wave = (function(){
   let ttsOn = true;            // ARIA voices her replies
   let lastAriaKey = null;
   let ttsPrimed = false;       // don't read the backlog out loud on first load
+  let voices = [];             // cached voice list (populated async)
+  const savedVoice = () => localStorage.getItem('aria.voice') || '';
+
+  // Rank Russian voices by quality: cloud/neural voices sound human, the
+  // built-in localService ones sound robotic. Higher score = preferred.
+  function voiceScore(v){
+    let s = 0;
+    const n = (v.name || '').toLowerCase();
+    if(/ru/i.test(v.lang)) s += 100;            // must be Russian
+    if(!v.localService) s += 40;                // cloud/online = natural
+    if(/google/.test(n)) s += 30;               // Google voices are good
+    if(/yandex|alyss|alena|milena|tatyana/.test(n)) s += 25;
+    if(/natural|neural|online|enhanced|premium/.test(n)) s += 35;
+    if(/microsoft/.test(n)) s += 10;
+    if(/compact|espeak/.test(n)) s -= 30;       // these are the robots
+    return s;
+  }
+  function pickVoice(){
+    const ru = voices.filter(v => /ru/i.test(v.lang));
+    const pref = savedVoice();
+    if(pref){
+      const exact = ru.find(v => v.name === pref);
+      if(exact) return exact;
+    }
+    return ru.slice().sort((a,b)=> voiceScore(b) - voiceScore(a))[0]
+        || voices.slice().sort((a,b)=> voiceScore(b) - voiceScore(a))[0]
+        || null;
+  }
+  function loadVoices(){ voices = synth ? (synth.getVoices() || []) : []; }
+  if(synth){
+    loadVoices();
+    // voices arrive asynchronously in Chrome — refresh when they do
+    synth.addEventListener?.('voiceschanged', loadVoices);
+  }
   function speak(text){
     if(!synth || !text) return;
     try{
+      if(!voices.length) loadVoices();
       synth.cancel();
       const u = new SpeechSynthesisUtterance(text);
-      u.lang = 'ru-RU'; u.rate = 1.04;
-      const v = (synth.getVoices() || []).find(x => /ru/i.test(x.lang));
+      u.lang = 'ru-RU';
+      u.rate = 0.98;   // a touch slower than default reads calmer
+      u.pitch = 1.0;   // neutral pitch avoids the chipmunk effect
+      const v = pickVoice();
       if(v) u.voice = v;
       synth.speak(u);
     }catch(_){}
+  }
+  function listVoices(){
+    if(!voices.length) loadVoices();
+    const ru = voices.filter(v => /ru/i.test(v.lang))
+                     .sort((a,b)=> voiceScore(b) - voiceScore(a));
+    if(!ru.length){ echo('русских голосов в браузере нет — поставь язык в системе','alert'); return; }
+    const cur = pickVoice();
+    ru.forEach(v => echo((v===cur?'● ':'○ ') + v.name + (v.localService?' (offline)':' (cloud)'), 'aria'));
+    echo('переключить: «голос <имя>»', 'aria');
+  }
+  function setVoice(name){
+    if(!voices.length) loadVoices();
+    const ru = voices.filter(v => /ru/i.test(v.lang));
+    const v = ru.find(x => x.name.toLowerCase().includes(name.toLowerCase()))
+           || voices.find(x => x.name.toLowerCase().includes(name.toLowerCase()));
+    if(!v){ echo('голос не найден: ' + name + ' — «голос список»','alert'); return; }
+    localStorage.setItem('aria.voice', v.name);
+    echo('голос установлен: ' + v.name, 'aria');
+    speak('Голос переключён. Так лучше?');
   }
   function maybeSpeak(entries){
     const aria = (entries||[]).filter(e => e.role === 'aria');
@@ -1533,7 +1805,7 @@ const wave = (function(){
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   const core = document.getElementById('sphere');
   let rec = null, listening = false;
-  core.title = SR ? 'CLICK CORE TO SPEAK · нажми и говори' : 'голос не поддерживается этим браузером';
+  core.title = SR ? 'клик — говорить · клик ещё раз — отправить · Esc — прервать ARIA' : 'голос не поддерживается этим браузером';
 
   function setListening(on){
     listening = on;
@@ -1541,18 +1813,44 @@ const wave = (function(){
     stateLbl.textContent = on ? 'LISTENING' : 'STANDBY';
     stateLbl.style.color = on ? 'var(--a-300)' : '';
   }
+  // Stop ARIA mid-sentence (barge-in). Used by Esc, by clicking the log, and
+  // automatically when you start talking — so you can cut her off any time.
+  function stopSpeaking(){ try{ synth && synth.cancel(); }catch(_){} }
+
+  let voiceBuffer = '';   // accumulates final fragments across pauses
   function startVoice(){
     if(!SR){ echo('голос не поддерживается этим браузером — пиши текстом','alert'); return; }
-    if(listening){ try{ rec && rec.stop(); }catch(_){} return; }
+    stopSpeaking();   // starting to speak interrupts ARIA's current reply
+    if(listening){ try{ rec && rec.stop(); }catch(_){} return; }  // 2nd click = finish & send
     rec = new SR();
-    rec.lang = 'ru-RU'; rec.interimResults = false; rec.maxAlternatives = 1;
+    // continuous + interim so pauses while you think don't cut you off; the
+    // phrase is sent only when you click the core again (or recognition ends).
+    rec.lang = 'ru-RU'; rec.continuous = true; rec.interimResults = true; rec.maxAlternatives = 1;
+    voiceBuffer = '';
     rec.onstart  = ()=>{ setListening(true); sphere.pulse(0.6); };
-    rec.onerror  = (e)=>{ echo('mic: ' + (e.error||'error'), 'alert'); setListening(false); };
-    rec.onend    = ()=> setListening(false);
-    rec.onresult = (e)=>{ const t = e.results[0][0].transcript.trim(); if(t) send(t); };
+    rec.onerror  = (e)=>{
+      // 'no-speech'/'aborted' are normal on stop — don't nag about those.
+      if(e.error && e.error!=='no-speech' && e.error!=='aborted') echo('mic: ' + e.error, 'alert');
+    };
+    rec.onresult = (e)=>{
+      let finalTxt = '';
+      for(let i=e.resultIndex; i<e.results.length; i++){
+        if(e.results[i].isFinal) finalTxt += e.results[i][0].transcript;
+      }
+      if(finalTxt.trim()) voiceBuffer += (voiceBuffer ? ' ' : '') + finalTxt.trim();
+    };
+    rec.onend = ()=>{
+      setListening(false);
+      const t = voiceBuffer.trim(); voiceBuffer = '';
+      if(t) send(t);
+    };
     try{ rec.start(); }catch(_){ setListening(false); }
   }
   core.addEventListener('click', startVoice);
+
+  // Interrupt ARIA's speech: Esc anywhere, or a click on the console log.
+  addEventListener('keydown', (e)=>{ if(e.key==='Escape') stopSpeaking(); });
+  log.addEventListener('click', stopSpeaking);
 
   poll();
   setInterval(poll, 3000);

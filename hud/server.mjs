@@ -43,7 +43,9 @@ const HUD_PORT = parseInt(env.HUD_PORT || '3200', 10);
 const HUD_TOKEN = env.HUD_TOKEN || '';
 const WEBHOOK_PORT = parseInt(env.WEBHOOK_PORT || '3100', 10);
 const WEBHOOK_SECRET = env.WEBHOOK_SECRET || '';
-const GROUP = env.HUD_GROUP_FOLDER || 'telegram_main';
+// Console commands go to the dedicated ARIA group (local hud: channel), so
+// they never echo into Telegram. The board still reads telegram_main data.
+const GROUP = env.HUD_CONSOLE_FOLDER || 'aria';
 
 const DB_PATH = path.join(ROOT, 'store', 'messages.db');
 const db = new Database(DB_PATH, { readonly: true, fileMustExist: true });
@@ -134,11 +136,19 @@ function buildEvents() {
 function buildWorks() {
   try {
     return db
-      .prepare(`SELECT key, label FROM hud_works ORDER BY sort_order, id`)
+      .prepare(`SELECT key, label, screen FROM hud_works ORDER BY sort_order, id`)
       .all()
-      .map((r) => ({ key: r.key, label: r.label }));
+      .map((r) => ({ key: r.key, label: r.label, screen: r.screen || 'main' }));
   } catch {
-    return [];
+    // Older DBs without the `screen` column — fall back gracefully.
+    try {
+      return db
+        .prepare(`SELECT key, label FROM hud_works ORDER BY sort_order, id`)
+        .all()
+        .map((r) => ({ key: r.key, label: r.label, screen: 'main' }));
+    } catch {
+      return [];
+    }
   }
 }
 
@@ -190,7 +200,7 @@ function buildState() {
     now: new Date().toISOString(),
     tz: TZ,
     events,
-    works, // [{key,label}] ordered — right-column panels
+    works, // [{key,label,screen}] ordered — right-column panels, grouped by screen
     tasks, // { <workKey>: [...], other: [...] }
     log: buildLog(),
     status: {
@@ -265,7 +275,10 @@ const server = createServer(async (req, res) => {
       return;
     }
     const html = readFileSync(path.join(__dirname, 'public', 'index.html'));
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store, must-revalidate',
+    });
     res.end(html);
     return;
   }

@@ -48,14 +48,28 @@ describe('heuristicClassify', () => {
 describe('store round-trip', () => {
   beforeEach(initHudDb);
 
-  it('seeds default work areas', () => {
+  it('seeds default work areas across screens', () => {
     const works = getWorks();
-    expect(works.map((w) => w.key)).toEqual(['yandex', 'enspire']);
+    expect(works.map((w) => w.key)).toEqual([
+      'yandex',
+      'enspire',
+      'family',
+      'projects',
+    ]);
     expect(works[0].hints).toContain('яндекс');
+    // Work areas are grouped into swipeable HUD screens.
+    expect(works.find((w) => w.key === 'yandex')?.screen).toBe('main');
+    expect(works.find((w) => w.key === 'family')?.screen).toBe('family');
+    expect(works.find((w) => w.key === 'projects')?.screen).toBe('projects');
   });
 
   it('inserts and groups tasks by work', () => {
-    insertTask({ work: 'yandex', title: 'billing API', project: 'YA', kind: 'task' });
+    insertTask({
+      work: 'yandex',
+      title: 'billing API',
+      project: 'YA',
+      kind: 'task',
+    });
     insertTask({ work: 'other', title: 'афиши', kind: 'task' });
     const rows = getDb()
       .prepare('SELECT work, title FROM hud_tasks WHERE done = 0 ORDER BY id')
@@ -65,14 +79,22 @@ describe('store round-trip', () => {
   });
 
   it('inserts and reads events', () => {
-    insertEvent({ title: 'STANDUP', project: 'YA', start_ts: '2026-05-27T09:30:00+03:00' });
-    const row = getDb().prepare('SELECT title FROM hud_events').get() as { title: string };
+    insertEvent({
+      title: 'STANDUP',
+      project: 'YA',
+      start_ts: '2026-05-27T09:30:00+03:00',
+    });
+    const row = getDb().prepare('SELECT title FROM hud_events').get() as {
+      title: string;
+    };
     expect(row.title).toBe('STANDUP');
   });
 
   it('caps the log at 200 rows', () => {
     for (let i = 0; i < 210; i++) appendLog('sys', `line ${i}`);
-    const count = getDb().prepare('SELECT COUNT(*) c FROM hud_log').get() as { c: number };
+    const count = getDb().prepare('SELECT COUNT(*) c FROM hud_log').get() as {
+      c: number;
+    };
     expect(count.c).toBe(200);
   });
 });
