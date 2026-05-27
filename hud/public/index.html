@@ -102,7 +102,7 @@ body{
   z-index:2;
   height:100vh;
   display:grid;
-  grid-template-rows: 70px 1fr 168px;
+  grid-template-rows: 70px 1fr 220px;
   grid-template-columns: 320px 1fr 360px;
   grid-template-areas:
     "head head head"
@@ -635,6 +635,26 @@ body{
   color: var(--t-200);
   border-radius: 2px;
 }
+.cmd-row .ctl .voice-sel{
+  max-width: 150px;
+  background: rgba(10,34,38,.6);
+  color: var(--t-200);
+  border: 1px solid rgba(79,217,214,.3);
+  border-radius: 3px;
+  font-family: var(--f-mono);
+  font-size: 10px; letter-spacing: .08em;
+  padding: 4px 6px; cursor: pointer; outline: none;
+}
+.cmd-row .ctl .voice-sel:hover{ border-color: var(--a-300) }
+.cmd-row .ctl .voice-sel option{ background:#0a2226; color:var(--t-100) }
+.cmd-row .ctl .tts-btn{
+  background: rgba(10,34,38,.6);
+  border: 1px solid rgba(79,217,214,.3);
+  border-radius: 3px;
+  font-size: 13px; line-height: 1; padding: 4px 7px; cursor: pointer;
+}
+.cmd-row .ctl .tts-btn.off{ opacity:.45; border-color: var(--fg-mute) }
+.cmd-row .ctl .tts-btn:hover{ border-color: var(--a-300) }
 .cmd-row .vu{
   width: 64px; height:18px;
   display:flex; gap: 2px; align-items:flex-end;
@@ -664,10 +684,14 @@ body{
   font-size: 11px;
   line-height: 1.45;
   color: var(--fg-dim);
-  overflow:hidden;
+  overflow-y:auto;               /* scroll instead of clipping older lines */
   position:relative;
   display:flex; flex-direction:column-reverse;
+  scrollbar-width:thin; scrollbar-color: rgba(79,217,214,.35) transparent;
 }
+.cmd-log::-webkit-scrollbar{ width:5px }
+.cmd-log::-webkit-scrollbar-thumb{ background:rgba(79,217,214,.35); border-radius:3px }
+.cmd-log::-webkit-scrollbar-track{ background:transparent }
 .cmd-log::before,.cmd-log::after,
 .cmd-log .ck-bl,.cmd-log .ck-br{
   content:""; position:absolute; width:12px; height:12px;
@@ -677,7 +701,8 @@ body{
 .cmd-log::after{top:-1px;right:-1px;border-width:1px 1px 0 0}
 .cmd-log .ck-bl{bottom:-1px;left:-1px;border-width:0 0 1px 1px}
 .cmd-log .ck-br{bottom:-1px;right:-1px;border-width:0 1px 1px 0}
-.cmd-log .ln{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+/* wrap long replies onto multiple lines instead of truncating them */
+.cmd-log .ln{ white-space:pre-wrap; word-break:break-word; padding:1px 0 }
 .cmd-log .ln .ts{ color: var(--fg-mute); margin-right: 6px }
 .cmd-log .ln.you{ color: var(--t-200) }
 .cmd-log .ln.aria{ color: var(--t-100) }
@@ -926,7 +951,13 @@ body{
         <span class="prompt">ARIA ▸</span>
         <input id="cmd" autocomplete="off" spellcheck="false" placeholder="отдай команду: «добавь блок», «как день», «status», «фокус»..." />
         <div class="vu"><i></i><i></i><i></i><i></i><i></i><i></i></div>
-        <div class="ctl"><span class="kbd">ENTER</span> EXEC</div>
+        <div class="ctl">
+          <select id="voiceSel" class="voice-sel" title="голос ARIA (озвучка ответов)">
+            <option value="">голос…</option>
+          </select>
+          <button id="ttsToggle" class="tts-btn" title="вкл/выкл озвучку">🔊</button>
+          <span class="kbd">ENTER</span> EXEC
+        </div>
       </div>
       <div class="hints">TRY: focus · status · day · stall · time-left · добавь напомни про инвойс</div>
     </div>
@@ -1754,10 +1785,28 @@ const wave = (function(){
         || null;
   }
   function loadVoices(){ voices = synth ? (synth.getVoices() || []) : []; }
+  // Fill the visible voice dropdown with Russian voices, best first.
+  function populateVoiceSelect(){
+    const sel = document.getElementById('voiceSel');
+    if(!sel || !synth) return;
+    if(!voices.length) loadVoices();
+    const ru = voices.filter(v => /ru/i.test(v.lang)).sort((a,b)=> voiceScore(b) - voiceScore(a));
+    if(!ru.length){ sel.innerHTML = '<option value="">нет рус. голосов</option>'; return; }
+    const cur = pickVoice(); const pref = savedVoice();
+    sel.innerHTML = '';
+    ru.forEach(v => {
+      const o = document.createElement('option');
+      o.value = v.name;
+      o.textContent = v.name.replace(/^(Microsoft|Google)\s+/i,'').slice(0,20) + (v.localService ? '' : ' ☁');
+      if(v.name === (pref || (cur && cur.name))) o.selected = true;
+      sel.appendChild(o);
+    });
+  }
   if(synth){
     loadVoices();
+    populateVoiceSelect();
     // voices arrive asynchronously in Chrome — refresh when they do
-    synth.addEventListener?.('voiceschanged', loadVoices);
+    synth.addEventListener?.('voiceschanged', ()=>{ loadVoices(); populateVoiceSelect(); });
   }
   function speak(text){
     if(!synth || !text) return;
@@ -1847,6 +1896,26 @@ const wave = (function(){
     try{ rec.start(); }catch(_){ setListening(false); }
   }
   core.addEventListener('click', startVoice);
+
+  // Voice picker dropdown — switch ARIA's voice and persist the choice.
+  const voiceSel = document.getElementById('voiceSel');
+  if(voiceSel) voiceSel.addEventListener('change', ()=>{
+    if(!voiceSel.value) return;
+    localStorage.setItem('aria.voice', voiceSel.value);
+    speak('Голос переключён.');
+  });
+  // TTS on/off toggle button.
+  const ttsBtn = document.getElementById('ttsToggle');
+  if(ttsBtn){
+    const syncBtn = ()=>{ ttsBtn.textContent = ttsOn ? '🔊' : '🔈'; ttsBtn.classList.toggle('off', !ttsOn); };
+    syncBtn();
+    ttsBtn.addEventListener('click', ()=>{
+      ttsOn = !ttsOn;
+      if(!ttsOn) stopSpeaking();
+      syncBtn();
+      echo(ttsOn ? 'озвучка включена' : 'озвучка выключена', 'aria');
+    });
+  }
 
   // Interrupt ARIA's speech: Esc anywhere, or a click on the console log.
   addEventListener('keydown', (e)=>{ if(e.key==='Escape') stopSpeaking(); });
