@@ -2008,7 +2008,10 @@ const wave = (function(){
      command. It is paused while ARIA speaks so she doesn't hear herself.
      Note: browsers throttle background tabs — fully off-tab listening isn't
      possible in pure web; that would need a native always-on service. */
-  const WAKE = /\b(ари[яеи]|aria|арія)\b/i;
+  // NB: JS \b is ASCII-only and never matches around Cyrillic, so the wake
+  // word is detected with explicit non-letter boundaries instead. Preceded by
+  // start/non-letter and not followed by a letter (so "Мария"/"сценарии" don't fire).
+  const WAKE = /(?:^|[^а-яёa-z])(ари[яеёюи]|aria|арія)(?![а-яёa-z])/i;
   let wakeOn = false, wakeRec = null, wakeArmed = false, speaking = false;
 
   function onSpeakStart(){ speaking = true; stopWakeRec(); }
@@ -2028,8 +2031,9 @@ const wave = (function(){
         }
         const m = said.match(WAKE);
         if(m){
-          const after = said.slice(said.toLowerCase().indexOf(m[0].toLowerCase()) + m[0].length)
-                            .replace(/^[\s,!.:—-]+/, '').trim();
+          const w = m[1];                                  // the wake word itself
+          const pos = said.toLowerCase().indexOf(w.toLowerCase());
+          const after = said.slice(pos + w.length).replace(/^[\s,!.:—–-]+/, '').trim();
           if(after){ sphere.pulse(0.8); send(after); }     // "Ария, <команда>" in one breath
           else { wakeArmed = true; sphere.pulse(0.5); echo('слушаю…','aria'); }  // bare "Ария" → next phrase
         }

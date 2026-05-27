@@ -12,14 +12,12 @@
  */
 import { registerExtension } from '../orchestrator/extensions.js';
 import { readEnvFile } from '../orchestrator/env.js';
-import { logger } from '../orchestrator/logger.js';
 import type {
   IngestionEnvelope,
   OutboundEnvelope,
 } from '../orchestrator/types.js';
 import { HUD_SCHEMA } from './schema.js';
-import { classifyMessage } from './classifier.js';
-import { appendLog, getWorks, insertEvent, insertTask } from './store.js';
+import { appendLog } from './store.js';
 
 // The board (timeline/works/awaiting) is fed from the Telegram main group.
 const HUD_GROUP_FOLDER =
@@ -38,37 +36,6 @@ function isHudGroup(folder?: string): boolean {
   return folder === HUD_GROUP_FOLDER || folder === HUD_CONSOLE_FOLDER;
 }
 
-async function captureInbound(prompt: string): Promise<void> {
-  // Read work areas fresh each time so newly-added projects apply without a restart.
-  const works = getWorks();
-  const c = await classifyMessage(prompt, works);
-  switch (c.kind) {
-    case 'event':
-      insertEvent({
-        title: c.title,
-        project: c.project,
-        start_ts: c.whenISO || new Date().toISOString(),
-        protected: c.protectedBlock,
-        source: 'classifier',
-      });
-      break;
-    case 'task':
-    case 'promise':
-    case 'awaiting':
-      // All actionable items become current tasks under their work area.
-      insertTask({
-        work: c.work,
-        title: c.title,
-        project: c.project,
-        kind: c.kind,
-      });
-      break;
-    case 'chatter':
-    default:
-      break; // only the log line, no panel entry
-  }
-}
-
 registerExtension({
   name: 'ops-router',
   dbSchema: HUD_SCHEMA,
@@ -76,14 +43,11 @@ registerExtension({
   hooks: {
     postIngest(envelope: IngestionEnvelope): void {
       if (!isHudGroup(envelope.groupFolder)) return;
-      // Skip the bot's own echoes / non-channel synthetic triggers in the log
+      // Mirror the inbound line into the HUD comms log. The board itself is
+      // written by ARIA via hud/board.mjs (so she can ask for missing times
+      // before recording) — not by an auto-classifier here.
       const prompt = (envelope.prompt || '').trim();
-      if (!prompt) return;
-
-      appendLog('you', prompt);
-      captureInbound(prompt).catch((err) =>
-        logger.debug({ err }, 'ops-router: captureInbound failed'),
-      );
+      if (prompt) appendLog('you', prompt);
     },
 
     postRoute(envelope: OutboundEnvelope): void {
