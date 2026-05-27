@@ -655,6 +655,12 @@ body{
 }
 .cmd-row .ctl .tts-btn.off{ opacity:.45; border-color: var(--fg-mute) }
 .cmd-row .ctl .tts-btn:hover{ border-color: var(--a-300) }
+.cmd-row .ctl .wake-btn.on{
+  border-color: var(--a-300); color: var(--a-300);
+  box-shadow: 0 0 10px rgba(247,178,62,.5);
+  animation: wakePulse 1.6s ease-in-out infinite;
+}
+@keyframes wakePulse{ 0%,100%{ box-shadow:0 0 6px rgba(247,178,62,.35) } 50%{ box-shadow:0 0 14px rgba(247,178,62,.7) } }
 .cmd-row .vu{
   width: 64px; height:18px;
   display:flex; gap: 2px; align-items:flex-end;
@@ -956,6 +962,7 @@ body{
             <option value="">голос…</option>
           </select>
           <button id="ttsToggle" class="tts-btn" title="вкл/выкл озвучку">🔊</button>
+          <button id="wakeToggle" class="tts-btn wake-btn" title="включить wake-word «Ария»">👂</button>
           <span class="kbd">ENTER</span> EXEC
         </div>
       </div>
@@ -1744,6 +1751,7 @@ const wave = (function(){
       renderTimeline(s.events);
       renderWorks(s);
       renderLog(s.log);
+      setTtsConfig(s.tts);
       maybeSpeak(s.log);
       applyStatus(s.status);
       const hrs = document.querySelector('.kpis .kpi .k-num');
@@ -1756,8 +1764,24 @@ const wave = (function(){
   let ttsOn = true;            // ARIA voices her replies
   let lastAriaKey = null;
   let ttsPrimed = false;       // don't read the backlog out loud on first load
-  let voices = [];             // cached voice list (populated async)
-  const savedVoice = () => localStorage.getItem('aria.voice') || '';
+  let voices = [];             // cached browser voice list (populated async)
+  const savedVoice  = () => localStorage.getItem('aria.voice')  || '';   // browser voice name
+  const savedYVoice = () => localStorage.getItem('aria.yvoice') || '';   // yandex voice id
+
+  // TTS provider, reported by the server in /api/state.tts. 'yandex' = neural
+  // SpeechKit via /api/tts proxy; 'browser' = Web Speech fallback.
+  let ttsProvider = 'browser';
+  let yandexVoices = [];       // SpeakKit voice ids when provider is yandex
+  let yandexDefaultVoice = 'alena';
+  let curAudio = null;         // currently-playing Yandex audio (for barge-in)
+  function setTtsConfig(tts){
+    if(!tts) return;
+    const wasBrowser = ttsProvider !== tts.provider;
+    ttsProvider = tts.provider || 'browser';
+    yandexVoices = tts.voices || [];
+    if(tts.voice) yandexDefaultVoice = tts.voice;
+    if(wasBrowser) populateVoiceSelect();   // re-fill dropdown for the new provider
+  }
 
   // Rank Russian voices by quality: cloud/neural voices sound human, the
   // built-in localService ones sound robotic. Higher score = preferred.
@@ -1788,12 +1812,26 @@ const wave = (function(){
   // Fill the visible voice dropdown with Russian voices, best first.
   function populateVoiceSelect(){
     const sel = document.getElementById('voiceSel');
-    if(!sel || !synth) return;
+    if(!sel) return;
+    sel.innerHTML = '';
+    if(ttsProvider === 'yandex'){
+      // SpeakKit neural voices (server-provided).
+      const pref = savedYVoice() || yandexDefaultVoice;
+      yandexVoices.forEach(id => {
+        const o = document.createElement('option');
+        o.value = id;
+        o.textContent = id[0].toUpperCase() + id.slice(1) + ' ✨';   // ✨ = neural
+        if(id === pref) o.selected = true;
+        sel.appendChild(o);
+      });
+      return;
+    }
+    // Browser voices fallback.
+    if(!synth){ sel.innerHTML = '<option value="">нет голосов</option>'; return; }
     if(!voices.length) loadVoices();
     const ru = voices.filter(v => /ru/i.test(v.lang)).sort((a,b)=> voiceScore(b) - voiceScore(a));
     if(!ru.length){ sel.innerHTML = '<option value="">нет рус. голосов</option>'; return; }
     const cur = pickVoice(); const pref = savedVoice();
-    sel.innerHTML = '';
     ru.forEach(v => {
       const o = document.createElement('option');
       o.value = v.name;
@@ -1808,7 +1846,7 @@ const wave = (function(){
     // voices arrive asynchronously in Chrome — refresh when they do
     synth.addEventListener?.('voiceschanged', ()=>{ loadVoices(); populateVoiceSelect(); });
   }
-  function speak(text){
+  function speakBrowser(text){
     if(!synth || !text) return;
     try{
       if(!voices.length) loadVoices();
@@ -1821,6 +1859,22 @@ const wave = (function(){
       if(v) u.voice = v;
       synth.speak(u);
     }catch(_){}
+  }
+  function speakYandex(text){
+    stopSpeaking();
+    const voice = savedYVoice() || yandexDefaultVoice;
+    const url = '/api/tts?voice=' + encodeURIComponent(voice) + '&text=' + encodeURIComponent(text.slice(0,4400));
+    const a = new Audio(url);
+    curAudio = a;
+    onSpeakStart();                                  // pause wake-word while ARIA talks
+    a.addEventListener('ended', onSpeakEnd);
+    a.addEventListener('error', ()=>{ onSpeakEnd(); speakBrowser(text); });  // fallback
+    a.play().catch(()=>{ onSpeakEnd(); speakBrowser(text); });
+  }
+  function speak(text){
+    if(!text) return;
+    if(ttsProvider === 'yandex') speakYandex(text);
+    else speakBrowser(text);
   }
   function listVoices(){
     if(!voices.length) loadVoices();
@@ -1864,13 +1918,18 @@ const wave = (function(){
   }
   // Stop ARIA mid-sentence (barge-in). Used by Esc, by clicking the log, and
   // automatically when you start talking — so you can cut her off any time.
-  function stopSpeaking(){ try{ synth && synth.cancel(); }catch(_){} }
+  function stopSpeaking(){
+    try{ synth && synth.cancel(); }catch(_){}
+    if(curAudio){ try{ curAudio.pause(); curAudio.src=''; }catch(_){} curAudio = null; }
+    onSpeakEnd();
+  }
 
   let voiceBuffer = '';   // accumulates final fragments across pauses
   function startVoice(){
     if(!SR){ echo('голос не поддерживается этим браузером — пиши текстом','alert'); return; }
     stopSpeaking();   // starting to speak interrupts ARIA's current reply
     if(listening){ try{ rec && rec.stop(); }catch(_){} return; }  // 2nd click = finish & send
+    stopWakeRec();    // only one recognizer at a time — pause wake during manual capture
     rec = new SR();
     // continuous + interim so pauses while you think don't cut you off; the
     // phrase is sent only when you click the core again (or recognition ends).
@@ -1892,6 +1951,7 @@ const wave = (function(){
       setListening(false);
       const t = voiceBuffer.trim(); voiceBuffer = '';
       if(t) send(t);
+      if(wakeOn && !speaking) setTimeout(startWakeRec, 400);   // resume hands-free mode
     };
     try{ rec.start(); }catch(_){ setListening(false); }
   }
@@ -1901,7 +1961,7 @@ const wave = (function(){
   const voiceSel = document.getElementById('voiceSel');
   if(voiceSel) voiceSel.addEventListener('change', ()=>{
     if(!voiceSel.value) return;
-    localStorage.setItem('aria.voice', voiceSel.value);
+    localStorage.setItem(ttsProvider === 'yandex' ? 'aria.yvoice' : 'aria.voice', voiceSel.value);
     speak('Голос переключён.');
   });
   // TTS on/off toggle button.
@@ -1920,6 +1980,57 @@ const wave = (function(){
   // Interrupt ARIA's speech: Esc anywhere, or a click on the console log.
   addEventListener('keydown', (e)=>{ if(e.key==='Escape') stopSpeaking(); });
   log.addEventListener('click', stopSpeaking);
+
+  /* ---------- WAKE WORD: "Ария …" (Alisa-style, hands-free) ----------
+     Works while this tab is open and has mic permission. A persistent
+     recognizer listens for the wake word; the rest of the phrase becomes the
+     command. It is paused while ARIA speaks so she doesn't hear herself.
+     Note: browsers throttle background tabs — fully off-tab listening isn't
+     possible in pure web; that would need a native always-on service. */
+  const WAKE = /\b(ари[яеи]|aria|арія)\b/i;
+  let wakeOn = false, wakeRec = null, wakeArmed = false, speaking = false;
+
+  function onSpeakStart(){ speaking = true; stopWakeRec(); }
+  function onSpeakEnd(){ if(speaking){ speaking = false; if(wakeOn) setTimeout(startWakeRec, 350); } }
+
+  function startWakeRec(){
+    if(!SR || !wakeOn || speaking || listening || wakeRec) return;
+    wakeRec = new SR();
+    wakeRec.lang = 'ru-RU'; wakeRec.continuous = true; wakeRec.interimResults = true; wakeRec.maxAlternatives = 1;
+    wakeRec.onresult = (e)=>{
+      for(let i=e.resultIndex; i<e.results.length; i++){
+        if(!e.results[i].isFinal) continue;
+        const said = e.results[i][0].transcript.trim();
+        if(!said) continue;
+        if(wakeArmed){                       // already heard "Ария", this is the command
+          wakeArmed = false; sphere.pulse(0.8); send(said); return;
+        }
+        const m = said.match(WAKE);
+        if(m){
+          const after = said.slice(said.toLowerCase().indexOf(m[0].toLowerCase()) + m[0].length)
+                            .replace(/^[\s,!.:—-]+/, '').trim();
+          if(after){ sphere.pulse(0.8); send(after); }     // "Ария, <команда>" in one breath
+          else { wakeArmed = true; sphere.pulse(0.5); echo('слушаю…','aria'); }  // bare "Ария" → next phrase
+        }
+      }
+    };
+    wakeRec.onerror = ()=>{};                // stay silent; onend will restart
+    wakeRec.onend = ()=>{ wakeRec = null; if(wakeOn && !speaking && !listening) setTimeout(startWakeRec, 400); };
+    try{ wakeRec.start(); }catch(_){ wakeRec = null; }
+  }
+  function stopWakeRec(){ const r = wakeRec; wakeRec = null; if(r){ try{ r.onend = null; r.stop(); }catch(_){} } }
+
+  const wakeBtn = document.getElementById('wakeToggle');
+  if(wakeBtn){
+    const syncWake = ()=>{ wakeBtn.classList.toggle('on', wakeOn); wakeBtn.title = wakeOn ? 'wake-word «Ария» включён — говори без кнопок' : 'включить wake-word «Ария»'; };
+    syncWake();
+    wakeBtn.addEventListener('click', ()=>{
+      if(!SR){ echo('распознавание речи не поддерживается этим браузером','alert'); return; }
+      wakeOn = !wakeOn; wakeArmed = false; syncWake();
+      if(wakeOn){ echo('режим «Ария» включён — скажи: «Ария, …»','aria'); startWakeRec(); }
+      else { echo('режим «Ария» выключен','aria'); stopWakeRec(); }
+    });
+  }
 
   poll();
   setInterval(poll, 3000);

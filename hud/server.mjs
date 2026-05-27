@@ -21,6 +21,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import Database from 'better-sqlite3';
+import { synthesize, SPEAKKIT_VOICES } from './yandex-tts.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -46,6 +47,12 @@ const WEBHOOK_SECRET = env.WEBHOOK_SECRET || '';
 // Console commands go to the dedicated ARIA group (local hud: channel), so
 // they never echo into Telegram. The board still reads telegram_main data.
 const GROUP = env.HUD_CONSOLE_FOLDER || 'aria';
+// Yandex SpeechKit (neural TTS) — optional. When the key is present the HUD
+// speaks via Yandex; otherwise it falls back to the browser's built-in voice.
+const YA_TTS_KEY = env.YANDEX_SPEECHKIT_API_KEY || '';
+const YA_TTS_VOICE = env.YANDEX_SPEECHKIT_VOICE || 'alena';
+const YA_TTS_EMOTION = env.YANDEX_SPEECHKIT_EMOTION || 'good';
+const YA_TTS_FOLDER = env.YANDEX_SPEECHKIT_FOLDER_ID || '';
 
 const DB_PATH = path.join(ROOT, 'store', 'messages.db');
 const db = new Database(DB_PATH, { readonly: true, fileMustExist: true });
@@ -203,6 +210,11 @@ function buildState() {
     works, // [{key,label,screen}] ordered — right-column panels, grouped by screen
     tasks, // { <workKey>: [...], other: [...] }
     log: buildLog(),
+    tts: {
+      provider: YA_TTS_KEY ? 'yandex' : 'browser',
+      voices: YA_TTS_KEY ? SPEAKKIT_VOICES : [],
+      voice: YA_TTS_VOICE,
+    },
     status: {
       counts,
       blocks: events.length,
@@ -295,6 +307,32 @@ const server = createServer(async (req, res) => {
     } catch (err) {
       sendJson(res, 500, { error: String(err && err.message) });
     }
+    return;
+  }
+
+  // Neural TTS proxy — synthesize ARIA's reply via Yandex SpeechKit and stream
+  // back OggOpus. The API key stays server-side. Cookie/header token-gated.
+  if (req.method === 'GET' && url.pathname === '/api/tts') {
+    if (!authorized(req)) return sendJson(res, 401, { error: 'unauthorized' });
+    if (!YA_TTS_KEY) return sendJson(res, 503, { error: 'yandex tts not configured' });
+    const text = (url.searchParams.get('text') || '').slice(0, 4500);
+    const voice = url.searchParams.get('voice') || YA_TTS_VOICE;
+    if (!text.trim()) return sendJson(res, 400, { error: 'empty text' });
+    synthesize(text, {
+      apiKey: YA_TTS_KEY,
+      voice,
+      emotion: YA_TTS_EMOTION,
+      folderId: YA_TTS_FOLDER || undefined,
+    })
+      .then((audio) => {
+        res.writeHead(200, {
+          'Content-Type': 'audio/ogg',
+          'Content-Length': audio.length,
+          'Cache-Control': 'no-store',
+        });
+        res.end(audio);
+      })
+      .catch((err) => sendJson(res, 502, { error: String(err && err.message) }));
     return;
   }
 
