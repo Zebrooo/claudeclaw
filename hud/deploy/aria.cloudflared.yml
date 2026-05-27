@@ -1,0 +1,19 @@
+# ARIA HUD — Cloudflare tunnel config (template).
+#
+# Setup (run once, with your existing cloudflared auth):
+#   cloudflared tunnel create aria
+#   cloudflared tunnel route dns aria aria.eremin.site
+#   # copy this file to ~/.cloudflared/aria.yml and fill in <TUNNEL_ID>
+#   # then run it (or install as a service):
+#   cloudflared tunnel --config ~/.cloudflared/aria.yml run
+#
+# The HUD is token-gated; open it at:
+#   https://aria.eremin.site/?key=<HUD_TOKEN from .env>
+
+tunnel: <TUNNEL_ID>
+credentials-file: /home/dmitriieremin/.cloudflared/<TUNNEL_ID>.json
+
+ingress:
+  - hostname: aria.eremin.site
+    service: http://localhost:3200
+  - service: http_status:404

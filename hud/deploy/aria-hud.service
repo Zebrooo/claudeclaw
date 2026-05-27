@@ -1,0 +1,17 @@
+[Unit]
+Description=ARIA HUD — command center web server for claudeclaw
+After=network.target claudeclaw.service
+Wants=claudeclaw.service
+
+[Service]
+Type=simple
+User=dmitriieremin
+WorkingDirectory=/home/dmitriieremin/my-assistant/claudeclaw
+EnvironmentFile=/home/dmitriieremin/my-assistant/claudeclaw/.env
+Environment=PATH=/home/dmitriieremin/.nvm/versions/node/v22.22.1/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/dmitriieremin/.nvm/versions/node/v22.22.1/bin/node /home/dmitriieremin/my-assistant/claudeclaw/hud/server.mjs
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
