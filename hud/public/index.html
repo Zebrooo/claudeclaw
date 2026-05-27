@@ -1900,10 +1900,24 @@ const wave = (function(){
     a.addEventListener('error', fallback);
     a.play().catch(fallback);
   }
+  // Strip markdown/markup/emoji so TTS doesn't read "звёздочка звёздочка" etc.
+  function cleanForSpeech(t){
+    return (t || '')
+      .replace(/```[\s\S]*?```/g, ' ')              // code fences
+      .replace(/`([^`]*)`/g, '$1')                  // inline code
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')      // [text](url) → text
+      .replace(/https?:\/\/\S+/g, 'ссылка')          // bare URLs
+      .replace(/[*_#>~|]+/g, '')                     // **bold** _em_ # > ~ |
+      .replace(/^\s*[-–—•‣◦·]\s+/gm, '')            // list bullets
+      .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}\u{FE0F}]/gu, '') // emoji/symbols
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
   function speak(text){
-    if(!text) return;
-    if(ttsProvider !== 'browser') speakServer(text);   // yandex or piper via /api/tts
-    else speakBrowser(text);
+    const clean = cleanForSpeech(text);
+    if(!clean) return;
+    if(ttsProvider !== 'browser') speakServer(clean);   // yandex or piper via /api/tts
+    else speakBrowser(clean);
   }
   function listVoices(){
     if(!voices.length) loadVoices();
