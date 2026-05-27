@@ -1,17 +1,20 @@
+# systemd USER service (matches how the other tunnels/apps run here).
+# Install (no sudo needed; linger keeps it running across reboots):
+#   cp hud/deploy/aria-hud.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now aria-hud
+#   loginctl enable-linger "$USER"   # once, so user services start at boot
 [Unit]
-Description=ARIA HUD — command center web server for claudeclaw
-After=network.target claudeclaw.service
-Wants=claudeclaw.service
+Description=ARIA HUD web server (claudeclaw command center)
+After=network-online.target
 
 [Service]
 Type=simple
-User=dmitriieremin
 WorkingDirectory=/home/dmitriieremin/my-assistant/claudeclaw
 EnvironmentFile=/home/dmitriieremin/my-assistant/claudeclaw/.env
-Environment=PATH=/home/dmitriieremin/.nvm/versions/node/v22.22.1/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/home/dmitriieremin/.nvm/versions/node/v22.22.1/bin/node /home/dmitriieremin/my-assistant/claudeclaw/hud/server.mjs
 Restart=always
-RestartSec=3
+RestartSec=5
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

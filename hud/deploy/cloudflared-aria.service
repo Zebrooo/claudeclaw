@@ -1,0 +1,17 @@
+# systemd USER service for the ARIA Cloudflare tunnel (aria.eremin.site → :3200).
+# Install (no sudo):
+#   cp hud/deploy/cloudflared-aria.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now cloudflared-aria
+# (requires ~/.cloudflared/aria.yml — see aria.cloudflared.yml)
+[Unit]
+Description=Cloudflare Tunnel (aria)
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/home/dmitriieremin/.local/bin/cloudflared tunnel --config /home/dmitriieremin/.cloudflared/aria.yml run
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
