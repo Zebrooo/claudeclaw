@@ -1483,11 +1483,63 @@ const wave = (function(){
       renderFronts(s.fronts);
       renderAwaiting(s.awaiting);
       renderLog(s.log);
+      maybeSpeak(s.log);
       applyStatus(s.status);
       const hrs = document.querySelector('.kpis .kpi .k-num');
       if(hrs) hrs.textContent = plannedHours(s.events);
     }catch(_){ /* keep last good render */ }
   }
+
+  /* ---------- TTS: speak new ARIA replies ---------- */
+  const synth = window.speechSynthesis;
+  let ttsOn = true;            // ARIA voices her replies
+  let lastAriaKey = null;
+  let ttsPrimed = false;       // don't read the backlog out loud on first load
+  function speak(text){
+    if(!synth || !text) return;
+    try{
+      synth.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = 'ru-RU'; u.rate = 1.04;
+      const v = (synth.getVoices() || []).find(x => /ru/i.test(x.lang));
+      if(v) u.voice = v;
+      synth.speak(u);
+    }catch(_){}
+  }
+  function maybeSpeak(entries){
+    const aria = (entries||[]).filter(e => e.role === 'aria');
+    if(aria.length === 0) return;
+    const last = aria[aria.length-1];
+    const key = (last.ts||'') + '|' + last.text;
+    if(!ttsPrimed){ lastAriaKey = key; ttsPrimed = true; return; }
+    if(key !== lastAriaKey){ lastAriaKey = key; if(ttsOn) speak(last.text); }
+  }
+
+  /* ---------- VOICE: push-to-talk by clicking the core ---------- */
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const core = document.getElementById('sphere');
+  let rec = null, listening = false;
+  core.title = SR ? 'CLICK CORE TO SPEAK · нажми и говори' : 'голос не поддерживается этим браузером';
+
+  function setListening(on){
+    listening = on;
+    sphere.setActive(on);
+    stateLbl.textContent = on ? 'LISTENING' : 'STANDBY';
+    stateLbl.style.color = on ? 'var(--a-300)' : '';
+  }
+  function startVoice(){
+    if(!SR){ echo('голос не поддерживается этим браузером — пиши текстом','alert'); return; }
+    if(listening){ try{ rec && rec.stop(); }catch(_){} return; }
+    rec = new SR();
+    rec.lang = 'ru-RU'; rec.interimResults = false; rec.maxAlternatives = 1;
+    rec.onstart  = ()=>{ setListening(true); sphere.pulse(0.6); };
+    rec.onerror  = (e)=>{ echo('mic: ' + (e.error||'error'), 'alert'); setListening(false); };
+    rec.onend    = ()=> setListening(false);
+    rec.onresult = (e)=>{ const t = e.results[0][0].transcript.trim(); if(t) send(t); };
+    try{ rec.start(); }catch(_){ setListening(false); }
+  }
+  core.addEventListener('click', startVoice);
+
   poll();
   setInterval(poll, 3000);
 })();
@@ -1495,30 +1547,9 @@ const wave = (function(){
 /* ---------- KEEP CMD FOCUSED AFTER BOOT ---------- */
 setTimeout(()=> document.getElementById('cmd').focus(), 1700);
 
-/* ---------- CLICK SPHERE TO TOGGLE LISTENING STATE ---------- */
-(function sphereClick(){
-  const cvs = document.getElementById('sphere');
-  const stateLbl = document.getElementById('ariaState');
-  const log = document.getElementById('log');
-  cvs.title = 'CLICK CORE TO TOGGLE LISTENING';
-  function appendLog(text, cls='sys'){
-    const d=new Date(), p=n=>String(n).padStart(2,'0');
-    const ts = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
-    const ln = document.createElement('div');
-    ln.className='ln '+cls;
-    ln.innerHTML = `<span class="ts">${ts}</span>${text}`;
-    log.appendChild(ln);
-    while(log.querySelectorAll('.ln').length>24) log.querySelector('.ln').remove();
-  }
-  cvs.addEventListener('click', ()=>{
-    const a = sphere.toggleActive();
-    sphere.pulse(0.8);
-    stateLbl.textContent = a ? 'LISTENING' : 'STANDBY';
-    stateLbl.style.color = a ? 'var(--a-300)' : '';
-    if(a) appendLog('<span class="who" style="color:var(--a-300)">ARIA ▸</span> «слушаю. говорите.»','aria');
-    else  appendLog('core · standby','sys');
-  });
-})();
+/* Core-click is owned by the voice push-to-talk handler inside the console
+   module above (STT + TTS). The old visual-only toggle was removed to avoid
+   two competing click handlers on the sphere. */
 
 </script>
 </body>
