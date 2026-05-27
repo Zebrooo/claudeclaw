@@ -22,6 +22,37 @@ export interface HudAwaiting {
   tag?: string | null;
 }
 
+/** A work-area key (e.g. "yandex") or the catch-all "other". */
+export type HudWork = string;
+
+export interface HudTask {
+  work: HudWork;
+  title: string;
+  project?: string | null;
+  kind?: string | null;
+}
+
+export interface WorkArea {
+  key: string;
+  label: string;
+  hints: string[];
+}
+
+/** Configured work areas (right-column panels), ordered. Data-driven via hud_works. */
+export function getWorks(): WorkArea[] {
+  const rows = getDb()
+    .prepare(`SELECT key, label, hints FROM hud_works ORDER BY sort_order, id`)
+    .all() as Array<{ key: string; label: string; hints: string | null }>;
+  return rows.map((r) => ({
+    key: r.key,
+    label: r.label,
+    hints: (r.hints || '')
+      .split(',')
+      .map((h) => h.trim())
+      .filter(Boolean),
+  }));
+}
+
 export type HudLogRole = 'you' | 'aria' | 'sys' | 'alert';
 
 export function insertEvent(e: HudEvent): void {
@@ -37,6 +68,21 @@ export function insertEvent(e: HudEvent): void {
       e.end_ts ?? null,
       e.protected ? 1 : 0,
       e.source ?? null,
+      new Date().toISOString(),
+    );
+}
+
+export function insertTask(t: HudTask): void {
+  getDb()
+    .prepare(
+      `INSERT INTO hud_tasks (work, title, project, kind, done, created_at)
+       VALUES (?, ?, ?, ?, 0, ?)`,
+    )
+    .run(
+      t.work,
+      t.title,
+      t.project ?? null,
+      t.kind ?? null,
       new Date().toISOString(),
     );
 }

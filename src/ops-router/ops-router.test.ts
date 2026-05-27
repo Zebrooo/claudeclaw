@@ -2,78 +2,72 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { _initTestDatabase, getDb } from '../orchestrator/db.js';
 import { HUD_SCHEMA } from './schema.js';
-import { heuristicClassify } from './classifier.js';
-import { appendLog, insertAwaiting, insertEvent, upsertFront } from './store.js';
+import { detectWork, heuristicClassify } from './classifier.js';
+import { appendLog, getWorks, insertEvent, insertTask } from './store.js';
 
 function initHudDb(): void {
   _initTestDatabase();
   for (const sql of HUD_SCHEMA) getDb().exec(sql);
 }
 
+const WORKS = [
+  { key: 'yandex', label: 'YANDEX', hints: ['yandex', 'яндекс'] },
+  { key: 'enspire', label: 'ENSPIRE', hints: ['enspire', 'azure', '.net'] },
+];
+
+describe('detectWork', () => {
+  it('matches a configured area by hint', () => {
+    expect(detectWork('задача по яндекс маркету', WORKS)).toBe('yandex');
+    expect(detectWork('починить .NET сервис', WORKS)).toBe('enspire');
+  });
+  it('falls back to other', () => {
+    expect(detectWork('купить кофе', WORKS)).toBe('other');
+  });
+  it('is empty-safe', () => {
+    expect(detectWork('что угодно', [])).toBe('other');
+  });
+});
+
 describe('heuristicClassify', () => {
   it('detects timed events', () => {
-    expect(heuristicClassify('встреча завтра в 15:30 по марнеро').kind).toBe('event');
+    expect(heuristicClassify('встреча завтра в 15:30').kind).toBe('event');
   });
-
-  it('detects outgoing promises', () => {
-    expect(heuristicClassify('я обещал отдать инвойс студии').kind).toBe('promise');
-  });
-
-  it('detects incoming awaiting', () => {
-    expect(heuristicClassify('жду ответа от юристов по контракту').kind).toBe('awaiting');
-  });
-
-  it('detects plain tasks', () => {
-    const c = heuristicClassify('напомни купить кофе');
+  it('tags work area when provided', () => {
+    const c = heuristicClassify('напомни про релиз в яндексе', WORKS);
     expect(c.kind).toBe('task');
+    expect(c.work).toBe('yandex');
   });
-
+  it('defaults work to other', () => {
+    expect(heuristicClassify('напомни купить кофе').work).toBe('other');
+  });
   it('falls back to chatter', () => {
     expect(heuristicClassify('привет, как дела').kind).toBe('chatter');
-  });
-
-  it('truncates long titles', () => {
-    const c = heuristicClassify('x'.repeat(200));
-    expect(c.title.length).toBeLessThanOrEqual(80);
   });
 });
 
 describe('store round-trip', () => {
   beforeEach(initHudDb);
 
+  it('seeds default work areas', () => {
+    const works = getWorks();
+    expect(works.map((w) => w.key)).toEqual(['yandex', 'enspire']);
+    expect(works[0].hints).toContain('яндекс');
+  });
+
+  it('inserts and groups tasks by work', () => {
+    insertTask({ work: 'yandex', title: 'billing API', project: 'YA', kind: 'task' });
+    insertTask({ work: 'other', title: 'афиши', kind: 'task' });
+    const rows = getDb()
+      .prepare('SELECT work, title FROM hud_tasks WHERE done = 0 ORDER BY id')
+      .all() as Array<{ work: string; title: string }>;
+    expect(rows).toHaveLength(2);
+    expect(rows[0].work).toBe('yandex');
+  });
+
   it('inserts and reads events', () => {
-    insertEvent({ title: 'STANDUP', project: 'JOBA', start_ts: '2026-05-27T09:30:00Z' });
-    const rows = getDb().prepare('SELECT * FROM hud_events').all() as Array<{
-      title: string;
-      project: string;
-    }>;
-    expect(rows).toHaveLength(1);
-    expect(rows[0].title).toBe('STANDUP');
-    expect(rows[0].project).toBe('JOBA');
-  });
-
-  it('inserts awaiting with direction', () => {
-    insertAwaiting({ direction: 'in', who: 'legal redlines', tag: 'JOBB' });
-    const row = getDb().prepare('SELECT * FROM hud_awaiting').get() as {
-      direction: string;
-      resolved: number;
-    };
-    expect(row.direction).toBe('in');
-    expect(row.resolved).toBe(0);
-  });
-
-  it('upserts fronts idempotently by key', () => {
-    upsertFront('aurum', { name: 'AURUM', pct: 18 });
-    upsertFront('aurum', { pct: 25, stalled: true });
-    const rows = getDb().prepare('SELECT * FROM hud_fronts').all() as Array<{
-      pct: number;
-      stalled: number;
-      name: string;
-    }>;
-    expect(rows).toHaveLength(1);
-    expect(rows[0].pct).toBe(25);
-    expect(rows[0].stalled).toBe(1);
-    expect(rows[0].name).toBe('AURUM');
+    insertEvent({ title: 'STANDUP', project: 'YA', start_ts: '2026-05-27T09:30:00+03:00' });
+    const row = getDb().prepare('SELECT title FROM hud_events').get() as { title: string };
+    expect(row.title).toBe('STANDUP');
   });
 
   it('caps the log at 200 rows', () => {

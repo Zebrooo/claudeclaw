@@ -746,6 +746,29 @@ body{
 .kpi.warn .k-num{ color: var(--a-200) }
 .kpi.warn{ border-color: rgba(247,178,62,.35); background: rgba(247,178,62,.05) }
 
+/* ===== work-area task panels (right column, data-driven) ===== */
+.right{ gap: var(--gutter) }
+.right .panel.work{ flex:1 1 0; min-height:0; display:flex; flex-direction:column; overflow:hidden }
+.task-list{ display:flex; flex-direction:column; gap:8px; overflow:hidden; padding-right:2px }
+.task-empty{ font-family:var(--f-mono); font-size:11px; color:var(--fg-mute); letter-spacing:.2em; padding:4px 2px }
+.task-row{
+  display:grid; grid-template-columns:9px 1fr auto; gap:9px; align-items:start;
+  padding:6px 2px; border-bottom:1px dashed rgba(79,217,214,.10);
+}
+.task-row:last-child{ border-bottom:0 }
+.task-row .t-dot{
+  width:6px; height:6px; margin-top:5px; border-radius:50%;
+  background:var(--t-300); box-shadow:0 0 6px var(--t-300);
+}
+.task-row.is-wait .t-dot{ background:var(--a-300); box-shadow:0 0 6px var(--a-300) }
+.task-row.is-promise .t-dot{ background:var(--t-100); box-shadow:0 0 6px var(--t-100) }
+.task-row .t-text{ font-family:var(--f-ui); font-size:13px; line-height:1.25; color:var(--fg) }
+.task-row .t-text small{
+  display:block; font-family:var(--f-mono); font-size:9.5px; letter-spacing:.16em;
+  color:var(--fg-mute); text-transform:uppercase; margin-top:2px;
+}
+.task-row .t-age{ font-family:var(--f-mono); font-size:10.5px; color:var(--fg-dim); white-space:nowrap }
+
 /* Selection */
 ::selection{ background: var(--t-500); color: #00191b }
 /* Scrollbar */
@@ -854,27 +877,10 @@ body{
     </div>
   </section>
 
-  <!-- ============ RIGHT ============ -->
-  <aside class="right">
-
-    <div class="panel fronts boot-in d3">
-      <span class="ck-bl"></span><span class="ck-br"></span>
-      <div class="panel-h">
-        <span><span class="dot"></span>ACTIVE FRONTS</span>
-        <span class="h-meta">06 OPEN</span>
-      </div>
-      <div class="list" id="fronts"></div>
-    </div>
-
-    <div class="panel awaiting boot-in d4">
-      <span class="ck-bl"></span><span class="ck-br"></span>
-      <div class="panel-h">
-        <span><span class="dot"></span>AWAITING RESPONSE</span>
-        <span class="h-meta">05 OPEN</span>
-      </div>
-      <div class="aw-list" id="awaiting"></div>
-    </div>
-
+  <!-- ============ RIGHT: WORK-AREA TASK PANELS (data-driven) ============ -->
+  <aside class="right boot-in d3" id="workPanels">
+    <!-- One panel per configured work area (YANDEX / ENSPIRE / … / ПРОЧЕЕ),
+         rendered from /api/state. Add areas via the hud_works table. -->
   </aside>
 
   <!-- ============ CONSOLE ============ -->
@@ -915,12 +921,21 @@ body{
     const w1=new Date(t.getFullYear(),0,4);
     return 1+Math.round(((t-w1)/864e5 - 3 + (w1.getDay()+6)%7)/7);
   }
+  // Always show Moscow wall-clock, regardless of the viewer's timezone.
+  function moscowDate(){
+    const p = new Intl.DateTimeFormat('en-US',{ timeZone:'Europe/Moscow',
+      year:'numeric',month:'2-digit',day:'2-digit',
+      hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false }).formatToParts(new Date());
+    const o={}; for(const x of p) o[x.type]=x.value;
+    const h = o.hour==='24' ? 0 : Number(o.hour);
+    return new Date(Number(o.year), Number(o.month)-1, Number(o.day), h, Number(o.minute), Number(o.second));
+  }
   function tick(){
-    const d=new Date();
+    const d=moscowDate();
     hh.textContent=pad(d.getHours());
     mm.textContent=pad(d.getMinutes());
     ss.textContent=pad(d.getSeconds());
-    date.textContent = `${DAYS[d.getDay()]} · ${pad(d.getDate())} ${MON[d.getMonth()]} ${d.getFullYear()} · W${getWeek(d)}`;
+    date.textContent = `${DAYS[d.getDay()]} · ${pad(d.getDate())} ${MON[d.getMonth()]} ${d.getFullYear()} · W${getWeek(d)} · MSK`;
   }
   tick(); setInterval(tick,1000);
 })();
@@ -1261,8 +1276,8 @@ function fmtHour(t){
   nll.textContent='NOW';
   rail.appendChild(nl); rail.appendChild(nll);
   function moveNow(){
-    const now=new Date();
-    const nowHr = now.getHours()+now.getMinutes()/60;
+    const p={}; for(const x of new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Moscow',hour:'2-digit',minute:'2-digit',hour12:false}).formatToParts(new Date())) p[x.type]=x.value;
+    const nowHr = (p.hour==='24'?0:Number(p.hour)) + Number(p.minute)/60;
     const y = ((Math.min(Math.max(nowHr,TIMELINE_START),TIMELINE_END)-TIMELINE_START)/total)*100;
     nl.style.top=y+'%'; nll.style.top=y+'%';
   }
@@ -1289,33 +1304,37 @@ function renderTimeline(blocks){
   });
 }
 
-function renderFronts(fronts){
-  const list=document.getElementById('fronts');
-  list.innerHTML='';
-  (fronts||[]).forEach(f=>{
-    const row=document.createElement('div');
-    row.className='front'+(f.stall?' is-stall':'');
-    row.innerHTML = `
-      <div class="top"><span class="name">${esc(f.name)}</span><span class="pct">${f.pct|0}%</span></div>
-      <div class="bar"><div class="fill" style="width:${f.pct|0}%"></div></div>
-      <div class="meta"><span>${esc(f.meta)}</span><span>${f.stall?'BLOCKED':'ON TRACK'}</span></div>
-    `;
-    list.appendChild(row);
-  });
-}
+// Right column: one panel per work area (from state.works, in order) + ПРОЧЕЕ.
+// Fully data-driven so new projects added to hud_works appear automatically.
+function renderWorks(state){
+  const root = document.getElementById('workPanels');
+  const works = (state.works || []).map(w => ({ key: w.key, label: w.label }));
+  const tasks = state.tasks || {};
+  const panels = works.concat([{ key: 'other', label: 'ПРОЧЕЕ' }]);
 
-function renderAwaiting(awaiting){
-  const list=document.getElementById('awaiting');
-  list.innerHTML='';
-  (awaiting||[]).forEach(a=>{
-    const row=document.createElement('div');
-    row.className='aw-row'+(a.old?' is-old':'');
-    row.innerHTML = `
-      <div class="dir">${esc(a.dir)}</div>
-      <div class="who">${esc(a.who)}<small>${esc(a.tag)}</small></div>
-      <div class="age">${esc(a.age)}</div>
-    `;
-    list.appendChild(row);
+  root.innerHTML = '';
+  panels.forEach(p => {
+    const items = tasks[p.key] || [];
+    const panel = document.createElement('div');
+    panel.className = 'panel work';
+    panel.innerHTML = `
+      <span class="ck-bl"></span><span class="ck-br"></span>
+      <div class="panel-h"><span><span class="dot"></span>${esc(p.label)}</span>
+        <span class="h-meta">${String(items.length).padStart(2,'0')}</span></div>
+      <div class="task-list"></div>`;
+    const list = panel.querySelector('.task-list');
+    if(items.length === 0){
+      const e = document.createElement('div'); e.className='task-empty'; e.textContent='—';
+      list.appendChild(e);
+    }
+    items.forEach(t => {
+      const row = document.createElement('div');
+      row.className = 'task-row' + (t.kind==='awaiting' ? ' is-wait' : t.kind==='promise' ? ' is-promise' : '');
+      const proj = t.project ? ` <small>${esc(t.project)}</small>` : '';
+      row.innerHTML = `<span class="t-dot"></span><span class="t-text">${esc(t.title)}${proj}</span><span class="t-age">${esc(t.age)}</span>`;
+      list.appendChild(row);
+    });
+    root.appendChild(panel);
   });
 }
 
@@ -1396,9 +1415,9 @@ const wave = (function(){
   const stateLbl = document.getElementById('ariaState');
 
   function tsOf(iso){
-    const d = iso ? new Date(iso) : new Date();
-    const p=n=>String(n).padStart(2,'0');
-    return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+    return new Intl.DateTimeFormat('ru-RU', {
+      timeZone:'Europe/Moscow', hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false,
+    }).format(iso ? new Date(iso) : new Date());
   }
 
   // The log is the source of truth from /api/state: rebuild it each poll.
@@ -1461,15 +1480,11 @@ const wave = (function(){
   function pad2(n){ return String(n).padStart(2,'0'); }
   function applyStatus(s){
     if(!s) return;
-    const warn = document.querySelector('.status-row .pill.warn');
-    if(warn) warn.innerHTML = `<span class="led"></span> ${s.stalled|0} STALL`;
+    const pill = document.querySelector('.status-row .pill.warn');
+    if(pill) pill.innerHTML = `<span class="led"></span> ${s.openTasks|0} TASKS`;
     const kpis = document.querySelectorAll('.kpis .kpi .k-num');
     if(kpis[1]) kpis[1].textContent = s.blocks|0;
     if(kpis[2]) kpis[2].textContent = s.protected|0;
-    const frMeta = document.querySelector('.fronts .panel-h .h-meta');
-    if(frMeta) frMeta.textContent = `${pad2(s.frontsOpen|0)} OPEN`;
-    const awMeta = document.querySelector('.awaiting .panel-h .h-meta');
-    if(awMeta) awMeta.textContent = `${pad2(s.awaitingOpen|0)} OPEN`;
   }
   function plannedHours(events){
     return Math.round((events||[]).reduce((a,b)=> a + Math.max(0,(b.end-b.start)), 0));
@@ -1480,8 +1495,7 @@ const wave = (function(){
       if(!r.ok) return;
       const s = await r.json();
       renderTimeline(s.events);
-      renderFronts(s.fronts);
-      renderAwaiting(s.awaiting);
+      renderWorks(s);
       renderLog(s.log);
       maybeSpeak(s.log);
       applyStatus(s.status);

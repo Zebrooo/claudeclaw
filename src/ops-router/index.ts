@@ -13,10 +13,13 @@
 import { registerExtension } from '../orchestrator/extensions.js';
 import { readEnvFile } from '../orchestrator/env.js';
 import { logger } from '../orchestrator/logger.js';
-import type { IngestionEnvelope, OutboundEnvelope } from '../orchestrator/types.js';
+import type {
+  IngestionEnvelope,
+  OutboundEnvelope,
+} from '../orchestrator/types.js';
 import { HUD_SCHEMA } from './schema.js';
 import { classifyMessage } from './classifier.js';
-import { appendLog, insertAwaiting, insertEvent } from './store.js';
+import { appendLog, getWorks, insertEvent, insertTask } from './store.js';
 
 const HUD_GROUP_FOLDER =
   process.env.HUD_GROUP_FOLDER ||
@@ -28,7 +31,9 @@ function isHudGroup(folder?: string): boolean {
 }
 
 async function captureInbound(prompt: string): Promise<void> {
-  const c = await classifyMessage(prompt);
+  // Read work areas fresh each time so newly-added projects apply without a restart.
+  const works = getWorks();
+  const c = await classifyMessage(prompt, works);
   switch (c.kind) {
     case 'event':
       insertEvent({
@@ -39,12 +44,16 @@ async function captureInbound(prompt: string): Promise<void> {
         source: 'classifier',
       });
       break;
-    case 'promise':
     case 'task':
-      insertAwaiting({ direction: 'out', who: c.title, tag: c.project });
-      break;
+    case 'promise':
     case 'awaiting':
-      insertAwaiting({ direction: 'in', who: c.title, tag: c.project });
+      // All actionable items become current tasks under their work area.
+      insertTask({
+        work: c.work,
+        title: c.title,
+        project: c.project,
+        kind: c.kind,
+      });
       break;
     case 'chatter':
     default:
@@ -71,7 +80,10 @@ registerExtension({
 
     postRoute(envelope: OutboundEnvelope): void {
       if (!isHudGroup(envelope.groupFolder)) return;
-      if (envelope.triggerType !== 'agent-response' && envelope.triggerType !== 'task-result')
+      if (
+        envelope.triggerType !== 'agent-response' &&
+        envelope.triggerType !== 'task-result'
+      )
         return;
       const text = (envelope.text || '').trim();
       if (text) appendLog('aria', text);

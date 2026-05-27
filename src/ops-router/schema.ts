@@ -43,6 +43,30 @@ export const HUD_SCHEMA: string[] = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_hud_awaiting_open ON hud_awaiting(resolved, created_at)`,
 
+  `CREATE TABLE IF NOT EXISTS hud_works (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key TEXT NOT NULL UNIQUE,
+    label TEXT NOT NULL,
+    hints TEXT,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+  )`,
+  // Default work areas — extend by inserting rows (see hud/add-work.mjs).
+  `INSERT OR IGNORE INTO hud_works (key, label, hints, sort_order, created_at) VALUES
+     ('yandex', 'YANDEX', 'yandex,яндекс', 1, datetime('now')),
+     ('enspire', 'ENSPIRE', 'enspire,ensol,azure,.net,core,энспайр', 2, datetime('now'))`,
+
+  `CREATE TABLE IF NOT EXISTS hud_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    work TEXT NOT NULL DEFAULT 'other',
+    title TEXT NOT NULL,
+    project TEXT,
+    kind TEXT,
+    done INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_hud_tasks_open ON hud_tasks(done, work, created_at)`,
+
   `CREATE TABLE IF NOT EXISTS hud_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT NOT NULL,

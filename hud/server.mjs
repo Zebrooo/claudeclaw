@@ -8,6 +8,8 @@
  *     WEBHOOK_SECRET, so "typing in the web == messaging the bot"
  *
  * If this process dies, the bot is unaffected. It never writes to the DB.
+ * All clock math is Europe/Moscow (the user's timezone), independent of the
+ * host's process timezone.
  *
  * Config (from claudeclaw .env): HUD_PORT, HUD_TOKEN, WEBHOOK_PORT,
  * WEBHOOK_SECRET, HUD_GROUP_FOLDER.
@@ -22,6 +24,7 @@ import Database from 'better-sqlite3';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
+const TZ = 'Europe/Moscow';
 
 /* ---------- config ---------- */
 function readEnv() {
@@ -45,16 +48,45 @@ const GROUP = env.HUD_GROUP_FOLDER || 'telegram_main';
 const DB_PATH = path.join(ROOT, 'store', 'messages.db');
 const db = new Database(DB_PATH, { readonly: true, fileMustExist: true });
 
-/* ---------- helpers ---------- */
+/* ---------- Moscow-time helpers ---------- */
+const mskFmt = new Intl.DateTimeFormat('en-GB', {
+  timeZone: TZ,
+  hour12: false,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+});
+function mskParts(d) {
+  const o = {};
+  for (const p of mskFmt.formatToParts(d)) o[p.type] = p.value;
+  return o;
+}
+function hourOf(iso) {
+  const p = mskParts(new Date(iso));
+  return Number(p.hour) + Number(p.minute) / 60;
+}
+function ymd(d) {
+  const p = mskParts(d);
+  return `${p.year}-${p.month}-${p.day}`;
+}
+function sameMskDay(iso) {
+  return ymd(new Date(iso)) === ymd(new Date());
+}
+function ageDays(iso) {
+  return Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000));
+}
+
+/* ---------- auth ---------- */
 function safeEqual(a, b) {
   const ba = Buffer.from(a || '');
   const bb = Buffer.from(b || '');
   if (ba.length !== bb.length) return false;
   return timingSafeEqual(ba, bb);
 }
-
 function authorized(req) {
-  if (!HUD_TOKEN) return true; // no token configured → open (localhost dev)
+  if (!HUD_TOKEN) return true;
   const cookie = (req.headers.cookie || '')
     .split(';')
     .map((c) => c.trim())
@@ -64,48 +96,18 @@ function authorized(req) {
   return safeEqual(fromCookie, HUD_TOKEN) || safeEqual(fromHeader, HUD_TOKEN);
 }
 
-function ageDays(iso) {
-  const ms = Date.now() - new Date(iso).getTime();
-  return Math.max(0, Math.floor(ms / 86_400_000));
-}
-
-function hourOf(iso) {
-  const d = new Date(iso);
-  return d.getHours() + d.getMinutes() / 60;
-}
-
-function sameLocalDay(iso) {
-  const d = new Date(iso);
-  const n = new Date();
-  return (
-    d.getFullYear() === n.getFullYear() &&
-    d.getMonth() === n.getMonth() &&
-    d.getDate() === n.getDate()
-  );
-}
-
 /* ---------- state assembly ---------- */
 function buildEvents() {
   const events = [];
-
-  // Captured timed events for today
   const rows = db
     .prepare(`SELECT title, project, start_ts, end_ts, protected FROM hud_events ORDER BY start_ts`)
     .all();
   for (const r of rows) {
-    if (!sameLocalDay(r.start_ts)) continue;
+    if (!sameMskDay(r.start_ts)) continue;
     const start = hourOf(r.start_ts);
     const end = r.end_ts ? hourOf(r.end_ts) : Math.min(23.5, start + 0.75);
-    events.push({
-      title: r.title,
-      project: r.project,
-      start,
-      end,
-      protected: !!r.protected,
-    });
+    events.push({ title: r.title, project: r.project, start, end, protected: !!r.protected });
   }
-
-  // Active scheduled tasks whose next run is today → schedule blocks
   try {
     const tasks = db
       .prepare(
@@ -113,7 +115,7 @@ function buildEvents() {
       )
       .all();
     for (const t of tasks) {
-      if (!sameLocalDay(t.next_run)) continue;
+      if (!sameMskDay(t.next_run)) continue;
       const start = hourOf(t.next_run);
       events.push({
         title: (t.prompt || 'SCHEDULED').slice(0, 40),
@@ -126,64 +128,76 @@ function buildEvents() {
   } catch {
     /* scheduled_tasks shape may vary; ignore */
   }
-
   return events.sort((a, b) => a.start - b.start);
 }
 
-function buildFronts() {
-  const rows = db
-    .prepare(`SELECT name, pct, meta, stalled FROM hud_fronts ORDER BY stalled DESC, pct DESC`)
-    .all();
-  return rows.map((r) => ({
-    name: r.name,
-    pct: r.pct,
-    meta: r.meta || '',
-    stall: !!r.stalled,
-  }));
+function buildWorks() {
+  try {
+    return db
+      .prepare(`SELECT key, label FROM hud_works ORDER BY sort_order, id`)
+      .all()
+      .map((r) => ({ key: r.key, label: r.label }));
+  } catch {
+    return [];
+  }
 }
 
-function buildAwaiting() {
-  const rows = db
-    .prepare(
-      `SELECT direction, who, tag, created_at FROM hud_awaiting WHERE resolved = 0 ORDER BY created_at ASC`,
-    )
-    .all();
-  return rows.map((r) => {
-    const days = ageDays(r.created_at);
-    return {
-      dir: r.direction === 'in' ? 'IN←' : 'OUT→',
-      who: r.who,
-      tag: r.tag || '',
-      age: `${days}d`,
-      old: days >= 5,
-    };
-  });
+function buildTasks(works) {
+  const grouped = {};
+  for (const w of works) grouped[w.key] = [];
+  grouped.other = [];
+  try {
+    const rows = db
+      .prepare(
+        `SELECT work, title, project, kind, created_at FROM hud_tasks WHERE done = 0 ORDER BY id DESC`,
+      )
+      .all();
+    for (const r of rows) {
+      const bucket = grouped[r.work] ? r.work : 'other';
+      if (grouped[bucket].length >= 12) continue;
+      grouped[bucket].push({
+        title: r.title,
+        project: r.project || '',
+        kind: r.kind || 'task',
+        age: `${ageDays(r.created_at)}d`,
+      });
+    }
+  } catch {
+    /* table may not exist yet */
+  }
+  return grouped;
 }
 
 function buildLog() {
-  const rows = db
-    .prepare(`SELECT ts, role, text FROM hud_log ORDER BY id DESC LIMIT 30`)
-    .all();
-  return rows.reverse().map((r) => ({ ts: r.ts, role: r.role, text: r.text }));
+  try {
+    return db
+      .prepare(`SELECT ts, role, text FROM hud_log ORDER BY id DESC LIMIT 30`)
+      .all()
+      .reverse()
+      .map((r) => ({ ts: r.ts, role: r.role, text: r.text }));
+  } catch {
+    return [];
+  }
 }
 
 function buildState() {
-  const fronts = buildFronts();
-  const awaiting = buildAwaiting();
+  const works = buildWorks();
+  const tasks = buildTasks(works);
   const events = buildEvents();
+  const counts = {};
+  for (const k of Object.keys(tasks)) counts[k] = tasks[k].length;
   return {
     now: new Date().toISOString(),
+    tz: TZ,
     events,
-    fronts,
-    awaiting,
+    works, // [{key,label}] ordered — right-column panels
+    tasks, // { <workKey>: [...], other: [...] }
     log: buildLog(),
     status: {
-      frontsOpen: fronts.length,
-      stalled: fronts.filter((f) => f.stall).length,
-      awaitingOpen: awaiting.length,
-      awaitingOld: awaiting.filter((a) => a.old).length,
+      counts,
       blocks: events.length,
       protected: events.filter((e) => e.protected).length,
+      openTasks: Object.values(counts).reduce((a, b) => a + b, 0),
     },
   };
 }
@@ -238,7 +252,6 @@ function sendJson(res, status, obj) {
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${HUD_PORT}`);
 
-  // Static HUD page (token-gated)
   if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
     const key = url.searchParams.get('key');
     if (HUD_TOKEN && key && safeEqual(key, HUD_TOKEN)) {
@@ -295,5 +308,5 @@ const server = createServer(async (req, res) => {
 
 server.listen(HUD_PORT, '127.0.0.1', () => {
   // eslint-disable-next-line no-console
-  console.log(`ARIA HUD listening on http://127.0.0.1:${HUD_PORT} (group: ${GROUP})`);
+  console.log(`ARIA HUD listening on http://127.0.0.1:${HUD_PORT} (group: ${GROUP}, tz: ${TZ})`);
 });
